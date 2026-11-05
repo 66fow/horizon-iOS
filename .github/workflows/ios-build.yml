@@ -1,0 +1,51 @@
+# Builds the game for iPhone and iPad on GitHub's hosted macOS runners and uploads an unsigned
+# Horizon.ipa. A sideloading tool (Sideloadly, AltStore) signs it with the player's own Apple ID
+# when it installs it (packaging/ios/README.md). The .ipa holds none of Mojang's files.
+name: iOS build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ios-build]
+    paths:
+      - "crates/**"
+      - "third_party/**"
+      - "packaging/ios/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/ios-build.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ipa:
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ios
+      - name: Build
+        env:
+          IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+        run: cargo build --profile fast --locked --target aarch64-apple-ios -p horizon-client --bin horizon-client
+      - name: Package
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/horizon-client/Cargo.toml | head -1)
+          packaging/ios/package.sh target/aarch64-apple-ios/fast/horizon-client "$version" dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: Horizon-ios
+          path: dist/Horizon.ipa
+          if-no-files-found: error

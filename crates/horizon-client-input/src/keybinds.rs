@@ -289,6 +289,7 @@ pub use horizon_client_core::key_display::display_name;
 /// Q key shows A.
 pub fn learn_layout(event: &winit::event::KeyEvent) {
     use winit::keyboard::{Key, PhysicalKey};
+    #[cfg(not(target_os = "ios"))]
     use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
     let PhysicalKey::Code(code) = event.physical_key else {
         return;
@@ -297,7 +298,13 @@ pub fn learn_layout(event: &winit::event::KeyEvent) {
         return;
     };
     let learn = horizon_client_core::key_display::learn_layout;
-    match event.key_without_modifiers() {
+    // iOS has no modifier supplement: its hardware keyboards report the
+    // logical key, which is the unmodified one for plain presses.
+    #[cfg(not(target_os = "ios"))]
+    let key = event.key_without_modifiers();
+    #[cfg(target_os = "ios")]
+    let key = event.logical_key.clone();
+    match key {
         Key::Character(text) => learn(name, &text),
         Key::Dead(Some(c)) => learn(name, c.encode_utf8(&mut [0; 4])),
         _ => {}

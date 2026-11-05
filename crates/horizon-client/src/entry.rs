@@ -12,6 +12,14 @@ pub fn main_with(mods: crate::mod_api::Mods) {
     if crate::mod_api::MODS.set(mods).is_err() {
         log::warn!("Trait mods already installed; ignoring the second list");
     }
+    // An iOS app starts in `/`, which it cannot write: the game folder (saves, options.txt,
+    // the prepared `resources`) is its Documents folder, which the Files app shows.
+    #[cfg(target_os = "ios")]
+    if let Some(home) = std::env::var_os("HOME") {
+        let documents = std::path::Path::new(&home).join("Documents");
+        let _ = std::fs::create_dir_all(&documents);
+        let _ = std::env::set_current_dir(&documents);
+    }
     horizon_threads::configure_allocator();
     horizon_client::telemetry::mark_start();
     horizon_client::spans::startup::init(std::time::Instant::now());

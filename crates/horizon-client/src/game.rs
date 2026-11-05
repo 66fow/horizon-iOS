@@ -641,6 +641,10 @@ impl Options {
         let mut o = Self {
             resources: if sibling.join("horizon-resources.json").exists() {
                 sibling
+            } else if cfg!(target_os = "ios") {
+                // The app's Documents folder (the working directory, entry.rs), where the
+                // Files app copies the prepared resources.
+                "resources".into()
             } else {
                 std::path::Path::new(".local/horizon-client").join(horizon_core::VANILLA_VERSION)
             },
@@ -21945,6 +21949,18 @@ impl ApplicationHandler for App {
         }
     }
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        // iOS sends touches and no mouse: the first finger is the mouse.
+        #[cfg(target_os = "ios")]
+        if matches!(event, WindowEvent::Touch(_)) {
+            thread_local! {
+                static TOUCH: std::cell::RefCell<horizon_client_input::touch::TouchMouse> =
+                    Default::default();
+            }
+            for event in TOUCH.with_borrow_mut(|t| t.translate(event)) {
+                self.window_event(event_loop, id, event);
+            }
+            return;
+        }
         match self {
             App::Loading(loading) => loading.window_event(event_loop, id, event),
             App::Ready(game) => game.window_event(event_loop, id, event),
