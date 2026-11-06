@@ -206,6 +206,9 @@ impl Game<'_> {
             self.pad.touch_state = PadState::default();
             return;
         };
+        // The controller's toggle sneak flips sneaking itself on each press.
+        self.pad.touch.sneak_taps =
+            self.settings.controller.toggle_sneak && !self.settings.toggle_crouch;
         let frame = self.pad.touch.frame(&layout, Instant::now());
         let mut state = PadState {
             left: frame.stick,
@@ -272,7 +275,11 @@ impl Game<'_> {
         for item in layout.items.iter().filter(|i| !i.hidden) {
             match item.control {
                 Control::Button(button) => {
-                    let pressed = self.pad.touch.pressed(button);
+                    let pressed = if button == TouchButton::Sneak && self.pad.touch.sneak_taps {
+                        self.keys.contains(&KeyCode::ShiftLeft)
+                    } else {
+                        self.pad.touch.pressed(button)
+                    };
                     draw_button(batch, atlas, button, item.area, item.opacity, pressed);
                 }
                 Control::Stick => {

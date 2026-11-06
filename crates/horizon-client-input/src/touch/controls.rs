@@ -622,6 +622,10 @@ pub struct TouchControls {
     fingers: HashMap<u64, Role>,
     /// Sneak toggles: one tap down, the next back up.
     sneaking: bool,
+    /// The game toggles sneaking itself on each press (the controller's
+    /// toggle sneak): Sneak is then a tap, and the game's state says whether
+    /// it is down. Set by the game.
+    pub sneak_taps: bool,
     /// Buttons tapped and held for a pulse, until then.
     pulses: Vec<(TouchButton, Instant)>,
     look: (f32, f32),
@@ -670,7 +674,9 @@ impl TouchControls {
             Started => {
                 let role = if let Some(button) = layout.button_at(at) {
                     match button {
-                        TouchButton::Sneak => self.sneaking = !self.sneaking,
+                        TouchButton::Sneak if !self.sneak_taps => {
+                            self.sneaking = !self.sneaking;
+                        }
                         TouchButton::Edit => {
                             self.release_all();
                             self.editor = Some(Editor {
@@ -851,9 +857,10 @@ impl TouchControls {
         })
     }
 
-    /// Whether `button` is down now, for drawing it pressed.
+    /// Whether `button` is down now, for drawing it pressed (with
+    /// `sneak_taps`, the game knows whether sneaking is on).
     pub fn pressed(&self, button: TouchButton) -> bool {
-        (button == TouchButton::Sneak && self.sneaking)
+        (button == TouchButton::Sneak && self.sneaking && !self.sneak_taps)
             || self
                 .fingers
                 .values()
@@ -872,7 +879,9 @@ impl TouchControls {
         let radius = layout.stick_radius;
         for role in self.fingers.values_mut() {
             match role {
-                Role::Button(b) if !matches!(b, TouchButton::Sneak | TouchButton::Edit) => {
+                Role::Button(b)
+                    if *b != TouchButton::Edit && (*b != TouchButton::Sneak || self.sneak_taps) =>
+                {
                     held.push(*b);
                 }
                 Role::Stick { origin, at } => {
@@ -896,7 +905,7 @@ impl TouchControls {
                 _ => {}
             }
         }
-        if self.sneaking {
+        if self.sneaking && !self.sneak_taps {
             held.push(TouchButton::Sneak);
         }
         held.sort_by_key(|b| *b as u8);

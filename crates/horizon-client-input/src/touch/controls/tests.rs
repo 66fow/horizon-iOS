@@ -131,6 +131,32 @@ fn sneak_toggles() {
 }
 
 #[test]
+fn where_the_game_toggles_sneaking_each_tap_is_a_press() {
+    // The controller's toggle sneak flips sneaking on each press: every tap
+    // must reach the game as one press, not every other one (a held toggle
+    // would press on the first tap and only release on the second).
+    let l = layout();
+    let mut t = TouchControls {
+        sneak_taps: true,
+        ..TouchControls::default()
+    };
+    let now = Instant::now();
+    let at = centre(&l, TouchButton::Sneak);
+    for tap in 0..3u64 {
+        let start = after(now, tap * 1000);
+        t.touch(&l, tap, Started, at, start);
+        t.touch(&l, tap, Ended, at, start);
+        assert_eq!(
+            t.frame(&l, after(start, 20)).held,
+            [TouchButton::Sneak],
+            "tap {tap}"
+        );
+        assert!(t.frame(&l, after(start, 500)).held.is_empty(), "tap {tap}");
+    }
+    assert!(!t.pressed(TouchButton::Sneak));
+}
+
+#[test]
 fn the_stick_follows_the_finger_from_where_it_landed() {
     let l = layout();
     let mut t = TouchControls::default();
