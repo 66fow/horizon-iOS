@@ -6,8 +6,6 @@ name: iOS build
 on:
   workflow_dispatch:
   push:
-    # A tag ios-v* builds the .ipa and publishes it as a pre-release, with GitHub's source archives.
-    tags: ["ios-v*"]
     branches: [ios-build]
 
 permissions:
@@ -38,21 +36,27 @@ jobs:
           IPHONEOS_DEPLOYMENT_TARGET: "15.0"
         run: cargo build --profile fast --locked --target aarch64-apple-ios -p horizon-client --bin horizon-client
       - name: Package
+        id: package
         run: |
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/horizon-client/Cargo.toml | head -1)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
           packaging/ios/package.sh target/aarch64-apple-ios/fast/horizon-client "$version" dist
       - uses: actions/upload-artifact@v7
         with:
           name: Horizon-ios
           path: dist/Horizon.ipa
           if-no-files-found: error
+      # Each build of the ios-build branch is published as a pre-release with the .ipa, tagged
+      # ios-r<run number> on the commit it built; GitHub adds the source archives to every release.
       - name: Publish the release
-        if: startsWith(github.ref, 'refs/tags/ios-v')
+        if: github.ref == 'refs/heads/ios-build'
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.package.outputs.version }}
         run: |
-          cp dist/Horizon.ipa "dist/Horizon-$GITHUB_REF_NAME.ipa"
-          gh release create "$GITHUB_REF_NAME" "dist/Horizon-$GITHUB_REF_NAME.ipa" \
-            --repo "$GITHUB_REPOSITORY" --prerelease --verify-tag \
-            --title "Horizon for iOS ($GITHUB_REF_NAME, experimental)" \
+          tag=ios-r$GITHUB_RUN_NUMBER
+          cp dist/Horizon.ipa "dist/Horizon-ios-$VERSION-r$GITHUB_RUN_NUMBER.ipa"
+          gh release create "$tag" "dist/Horizon-ios-$VERSION-r$GITHUB_RUN_NUMBER.ipa" \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
+            --title "Horizon for iOS $VERSION (build $GITHUB_RUN_NUMBER, experimental)" \
             --notes-file packaging/ios/README.md
