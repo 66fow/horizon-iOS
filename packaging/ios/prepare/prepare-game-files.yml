@@ -14,7 +14,7 @@ on:
         required: true
       horizon_repo:
         description: "The Horizon fork to prepare with"
-        default: meehandaniel4/horizon
+        default: meehandaniel4/horizon-ios
       horizon_ref:
         description: "Its branch"
         default: ios-build
