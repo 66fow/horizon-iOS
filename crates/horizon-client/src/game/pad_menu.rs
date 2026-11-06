@@ -1962,6 +1962,7 @@ impl Game<'_> {
     /// A finger lifted over a menu (touch.rs): on a text field, the
     /// on-screen keyboard opens, as A does there with a controller. iOS has
     /// no other keyboard for the game yet.
+    #[cfg_attr(not(target_os = "ios"), allow(dead_code))]
     pub(super) fn touch_tapped(&mut self) {
         if self.pad.menu.osk.is_none() && field_at(&self.pad_targets(), self.cursor) {
             self.pad_open_keyboard();
