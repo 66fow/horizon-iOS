@@ -44,6 +44,23 @@ pub fn runs(icon: &Icon) -> Vec<(usize, usize, usize)> {
     out
 }
 
+/// A cross: the button that closes a menu (an inventory, a crafting table,
+/// chat), as Escape does.
+pub const CLOSE: Icon = [
+    "............",
+    ".##......##.",
+    ".###....###.",
+    "..###..###..",
+    "...######...",
+    "....####....",
+    "....####....",
+    "...######...",
+    "..###..###..",
+    ".###....###.",
+    ".##......##.",
+    "............",
+];
+
 /// An arrow up.
 const JUMP: Icon = [
     "............",

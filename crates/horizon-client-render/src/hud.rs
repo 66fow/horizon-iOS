@@ -268,6 +268,14 @@ pub fn decode_image_bytes(data: &[u8]) -> Result<(u32, u32, Vec<u8>)> {
     }
 }
 
+/// The iOS build's logo, which its boot screen shows (`ui_theme::draw_boot`).
+#[cfg(target_os = "ios")]
+const IOS_LOGO: Option<&[u8]> = Some(include_bytes!("ios_logo.png"));
+#[cfg(not(target_os = "ios"))]
+const IOS_LOGO: Option<&[u8]> = None;
+/// The boot atlas's sprite of [`IOS_LOGO`].
+pub const IOS_LOGO_SPRITE: &str = "horizon/ios-logo";
+
 /// A PNG in memory as RGBA pixels.
 pub fn decode_bytes(data: &[u8]) -> Result<(u32, u32, Vec<u8>)> {
     let mut decoder = png::Decoder::new(std::io::Cursor::new(data));
@@ -939,10 +947,21 @@ impl HudAtlas {
     /// transparent black. Nothing from a pack: the boot screen draws with
     /// the theme's bundled faces, so the font here has no sheets to read.
     pub fn boot() -> Self {
-        let (width, height) = (1024, 1024);
+        // The glyphs fill the first 1024 rows; the iOS build's logo sits under them.
+        let (width, glyph_bottom) = (1024, 1024);
+        let logo = IOS_LOGO.and_then(|png| decode_bytes(png).ok());
+        let height = glyph_bottom + logo.as_ref().map_or(0, |(_, h, _)| *h);
         let text_rows = 512;
         let glyph_top = text_rows + 4;
         let mut pixels = vec![0u8; (width * height * 4) as usize];
+        if let Some((w, h, rgba)) = &logo {
+            for row in 0..*h {
+                let to = (((glyph_bottom + row) * width) * 4) as usize;
+                let from = (row * w * 4) as usize;
+                let n = (w.min(&width) * 4) as usize;
+                pixels[to..to + n].copy_from_slice(&rgba[from..from + n]);
+            }
+        }
         // The white sprite the fills and the font's underline pass sample.
         for row in 0..4 {
             let at = ((text_rows + row) * width * 4) as usize;
@@ -965,6 +984,12 @@ impl HudAtlas {
             "horizon/ui-text".into(),
             rect(0, 0, width, text_rows, width, text_rows),
         );
+        if let Some((w, h, _)) = &logo {
+            sprites.insert(
+                IOS_LOGO_SPRITE.into(),
+                rect(0, glyph_bottom, *w, glyph_bottom + h, *w, *h),
+            );
+        }
         let white = sprites["horizon/white"];
         Self {
             revision: Self::next_revision(),
@@ -973,7 +998,7 @@ impl HudAtlas {
                 &sprites,
                 &pixels,
                 (width, height),
-                (glyph_top, height - glyph_top),
+                (glyph_top, glyph_bottom - glyph_top),
                 white,
             ),
             galactic_widths: galactic_widths(&sprites, &pixels, width, height),

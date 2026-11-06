@@ -88,6 +88,33 @@ impl Game<'_> {
         }
     }
 
+    /// The cross that closes the menu over the world (vanilla closes them with
+    /// Escape or the inventory key, which a touch screen lacks): top right in
+    /// the safe area, while a menu is open in a world.
+    fn touch_close_button(&self, batch: &HudBatch) -> Option<Area> {
+        if !TOUCH_CONTROLS || self.player.is_none() || self.title.is_some() || !self.pad_in_menu() {
+            return None;
+        }
+        let safe = self.touch_safe(batch.width, batch.height, batch.scale);
+        let side = 22.0;
+        Some(Area {
+            x: safe.x + safe.w - side - 4.0,
+            y: safe.y + 4.0,
+            w: side,
+            h: side,
+        })
+    }
+
+    /// The menu's cross (`touch_close_button`).
+    pub(super) fn draw_touch_close(&self, batch: &mut HudBatch) {
+        if let Some(a) = self.touch_close_button(batch) {
+            let atlas = &self.gui.atlas;
+            batch.fill(atlas, a.x, a.y, a.w, a.h, 0xc020_2020);
+            outline(batch, atlas, a, EDGE);
+            draw_icon(batch, atlas, &icons::CLOSE, a, INK);
+        }
+    }
+
     /// The world is being played, with no screen over it: the controls are up.
     fn touch_playing(&self) -> bool {
         !self.pad_in_menu() && self.player.is_some() && !self.ui.hide_gui
@@ -98,6 +125,22 @@ impl Game<'_> {
     pub(super) fn touch_event(&mut self, touch: Touch) -> Vec<WindowEvent> {
         self.touch_load();
         let mouse = self.pad.touch_mouse.finger() == Some(touch.id);
+        // A menu over the world closes with its cross, as with Escape.
+        if !mouse
+            && touch.phase == TouchPhase::Started
+            && let Some(batch) = self.gui_scale()
+            && let Some(close) = self.touch_close_button(&batch)
+            && close.contains((
+                touch.location.x as f32 / batch.scale,
+                touch.location.y as f32 / batch.scale,
+            ))
+        {
+            log::info!("Horizon: touch close");
+            if let Err(e) = self.pad_back() {
+                log::warn!("Horizon: closing the menu: {e}");
+            }
+            return Vec::new();
+        }
         // The on-screen keyboard takes every finger while it is open.
         if !mouse && self.pad.menu.osk.is_some() {
             if touch.phase == TouchPhase::Ended
@@ -375,11 +418,14 @@ fn draw_button(
     };
     batch.fill(atlas, a.x, a.y, a.w, a.h, faded(face, k));
     outline(batch, atlas, a, faded(EDGE, k));
-    let icon = icons::icon(button);
+    draw_icon(batch, atlas, icons::icon(button), a, faded(ink, k));
+}
+
+/// `icon` centred in `a`, in `ink`.
+fn draw_icon(batch: &mut HudBatch, atlas: &HudAtlas, icon: &icons::Icon, a: Area, ink: u32) {
     let px = (a.w.min(a.h) * 0.62 / icons::SIZE as f32).max(0.5);
     let side = px * icons::SIZE as f32;
     let (x0, y0) = (a.x + (a.w - side) / 2.0, a.y + (a.h - side) / 2.0);
-    let ink = faded(ink, k);
     for (row, col, len) in icons::runs(icon) {
         batch.fill(
             atlas,

@@ -544,6 +544,11 @@ const BOOT_LOG: u32 = color::hex(0x9BA1A6, 255);
 /// pure black and the console's last lines at the bottom right, as the
 /// terminal prints them.
 pub fn draw_boot(atlas: &HudAtlas, batch: &mut HudBatch, logs: &[String]) {
+    if atlas.sprites.contains_key(crate::hud::IOS_LOGO_SPRITE) {
+        ios_boot(atlas, batch);
+        draw_boot_log(atlas, batch, logs);
+        return;
+    }
     // Pure black under everything: the frame's panorama (the title artwork
     // once the bundle is in) must not leak through.
     batch.fill(
@@ -556,6 +561,60 @@ pub fn draw_boot(atlas: &HudAtlas, batch: &mut HudBatch, logs: &[String]) {
     );
     wordmark(atlas, batch);
     draw_boot_log(atlas, batch, logs);
+}
+
+/// The iOS build's boot screen: its logo on the logo's own background, with
+/// "Horizon iOS" under it.
+fn ios_boot(atlas: &HudAtlas, batch: &mut HudBatch) {
+    // The logo image's background, so its edges don't show.
+    batch.fill(
+        atlas,
+        0.0,
+        0.0,
+        batch.width,
+        batch.height,
+        color::hex(0x16181F, 255),
+    );
+    let Some(logo) = atlas.sprites.get(crate::hud::IOS_LOGO_SPRITE).copied() else {
+        return;
+    };
+    let aspect = logo.w as f32 / logo.h as f32;
+    let w = (batch.width * 0.9).min(batch.height * 0.5 * aspect);
+    let h = w / aspect;
+    let top = batch.height * 0.42 - h / 2.0;
+    batch.sprite_scaled(
+        atlas,
+        crate::hud::IOS_LOGO_SPRITE,
+        (batch.width - w) / 2.0,
+        top,
+        w,
+        h,
+        u32::MAX,
+    );
+    // GUI units to the Ui's dp.
+    let scale = batch.scale;
+    let mut ui = Ui::new(atlas, batch, (0.0, 0.0));
+    let k = scale / ui.density;
+    let size = (ui.w / 18.0).clamp(DISPLAY, 80.0);
+    let small = (size * 0.25).clamp(MICRO, 16.0);
+    let y = (top + h) * k + size * 0.2;
+    ui.text_centered(
+        Face::SemiBold,
+        size,
+        ui.w / 2.0,
+        y,
+        BOOT_TEXT,
+        "Horizon iOS",
+    );
+    ui.text_centered(
+        Face::Mono,
+        small,
+        ui.w / 2.0,
+        y + size * 1.45 + small * 0.4,
+        BOOT_LOG,
+        "Rust based minecraft client",
+    );
+    ui.finish();
 }
 
 /// The wordmark with its tagline, centred.

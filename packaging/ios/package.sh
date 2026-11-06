@@ -23,7 +23,7 @@ chmod 755 "$app/horizon-client"
 sed "s/@VERSION@/$version/g" "$here/Info.plist" > "$app/Info.plist"
 plutil -lint "$app/Info.plist"
 printf 'APPL????' > "$app/PkgInfo"
-icon=$here/../icons/hicolor/512x512/apps/horizon.png
+icon=$here/icon.png
 sips -z 120 120 "$icon" --out "$app/AppIcon60x60@2x.png" >/dev/null
 sips -z 180 180 "$icon" --out "$app/AppIcon60x60@3x.png" >/dev/null
 
