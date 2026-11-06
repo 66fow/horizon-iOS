@@ -17,7 +17,9 @@ concurrency:
 
 jobs:
   ipa:
-    runs-on: macos-15
+    # GitHub's Apple Silicon Macs often have no capacity (the job is never picked up);
+    # its Intel ones build the same iPhone (arm64) binary.
+    runs-on: macos-15-intel
     permissions:
       contents: write
     timeout-minutes: 120
