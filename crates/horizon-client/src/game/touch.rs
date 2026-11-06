@@ -2,28 +2,90 @@
 //! first finger is the mouse; while playing, the on-screen controls
 //! (`horizon_client_input::touch`) act as a virtual controller: its buttons
 //! are the ones bound in the controller settings, its stick the left stick.
-//! Dragging the view turns it like the mouse does.
+//! Dragging the view turns it like the mouse does. The Edit button opens the
+//! layout editor; its layout is kept in `touch-controls.txt` beside
+//! `options.txt`.
 use super::*;
 use horizon_client::gamepad::{Button, PadState};
-use horizon_client_input::touch::{Layout, STICK_RADIUS};
-use winit::event::Touch;
+use horizon_client_input::touch::{
+    Area, Control, EditorButton, Layout, TouchButton, TouchSettings, icons,
+};
+use winit::event::{Touch, TouchPhase};
 
 /// How far the view turns per GUI unit dragged, in mouse-movement units
 /// (`look_turn`): a drag across a phone's screen turns about half a circle.
 const LOOK_SPEED: f64 = 2.0;
 
-/// Colours, as the HUD's `0xAARRGGBB`.
-const FACE: u32 = 0x5a00_0000;
-const FACE_PRESSED: u32 = 0x9aff_ffff;
-const EDGE: u32 = 0x80ff_ffff;
-const LABEL: u32 = 0xffff_ffff;
+/// Colours, as the HUD's `0xAARRGGBB`, at full opacity.
+const FACE: u32 = 0x6000_0000;
+const FACE_PRESSED: u32 = 0xa0ff_ffff;
+const EDGE: u32 = 0xa0ff_ffff;
+const INK: u32 = 0xffff_ffff;
+const INK_PRESSED: u32 = 0xff20_2020;
+const SELECTED: u32 = 0xffff_e040;
+const HIDDEN_EDGE: u32 = 0xc0ff_5050;
+const SHADE: u32 = 0x5000_0000;
 
 #[cfg_attr(not(target_os = "ios"), allow(dead_code))]
 impl Game<'_> {
+    /// The part of the window clear of the notch and the home bar, in GUI
+    /// units at `scale`: iOS reports it as the window's inner rectangle.
+    fn touch_safe(&self, width: f32, height: f32, scale: f32) -> Area {
+        let whole = Area {
+            x: 0.0,
+            y: 0.0,
+            w: width,
+            h: height,
+        };
+        let Some(window) = self.window.as_ref() else {
+            return whole;
+        };
+        let (Ok(inner), Ok(outer)) = (window.inner_position(), window.outer_position()) else {
+            return whole;
+        };
+        let size = window.inner_size();
+        let safe = Area {
+            x: (inner.x - outer.x) as f32 / scale,
+            y: (inner.y - outer.y) as f32 / scale,
+            w: size.width as f32 / scale,
+            h: size.height as f32 / scale,
+        };
+        // A safe area that doesn't fit the window is no safe area.
+        if safe.w <= 0.0
+            || safe.h <= 0.0
+            || safe.x + safe.w > width + 1.0
+            || safe.y + safe.h > height + 1.0
+        {
+            return whole;
+        }
+        safe
+    }
+
     /// The controls' layout on this window, in GUI units, and the GUI scale.
     fn touch_layout(&self) -> Option<(Layout, f32)> {
         let batch = self.gui_scale()?;
-        Some((Layout::new(batch.width, batch.height), batch.scale))
+        let safe = self.touch_safe(batch.width, batch.height, batch.scale);
+        Some((
+            self.pad.touch.layout(batch.width, batch.height, safe),
+            batch.scale,
+        ))
+    }
+
+    /// The saved layout, read once.
+    fn touch_load(&mut self) {
+        if self.pad.touch_loaded {
+            return;
+        }
+        self.pad.touch_loaded = true;
+        let path = touch_settings_path();
+        match std::fs::read_to_string(&path) {
+            Ok(text) => self.pad.touch.settings = TouchSettings::parse(&text),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => log::warn!(
+                "Horizon: touch controls: can't read {}: {e}",
+                path.display()
+            ),
+        }
     }
 
     /// The world is being played, with no screen over it: the controls are up.
@@ -34,10 +96,11 @@ impl Game<'_> {
     /// The mouse events `touch` stands for: a finger over a menu, or one that
     /// came down while a menu was open. A finger on the controls gives none.
     pub(super) fn touch_event(&mut self, touch: Touch) -> Vec<WindowEvent> {
+        self.touch_load();
         let mouse = self.pad.touch_mouse.finger() == Some(touch.id);
         // The on-screen keyboard takes every finger while it is open.
         if !mouse && self.pad.menu.osk.is_some() {
-            if touch.phase == winit::event::TouchPhase::Ended
+            if touch.phase == TouchPhase::Ended
                 && let Some((_, scale)) = self.touch_layout()
             {
                 let at = (
@@ -56,6 +119,16 @@ impl Game<'_> {
                 touch.location.x as f32 / scale,
                 touch.location.y as f32 / scale,
             );
+            if touch.phase == TouchPhase::Started
+                && !self.pad.touch.editing()
+                && let Some(button) = layout.button_at(at)
+            {
+                log::info!(
+                    "Horizon: touch button {button:?} at ({:.0}, {:.0})",
+                    at.0,
+                    at.1
+                );
+            }
             self.pad
                 .touch
                 .touch(&layout, touch.id, touch.phase, at, Instant::now());
@@ -69,14 +142,28 @@ impl Game<'_> {
     /// buttons and stick as a virtual controller, the view's drag as a turn
     /// and a tapped slot as its number key.
     pub(super) fn touch_frame(&mut self) {
-        if !self.touch_playing() {
+        if let Some(settings) = self.pad.touch.take_saved() {
+            let path = touch_settings_path();
+            match std::fs::write(&path, settings.to_text()) {
+                Ok(()) => log::info!("Horizon: touch controls saved to {}", path.display()),
+                Err(e) => log::warn!(
+                    "Horizon: touch controls: can't save {}: {e}",
+                    path.display()
+                ),
+            }
+        }
+        let layout = self
+            .touch_layout()
+            .filter(|_| self.touch_playing())
+            .map(|(layout, _)| layout);
+        let Some(layout) = layout else {
             if self.pad.touch.active() {
                 self.pad.touch.release_all();
             }
             self.pad.touch_state = PadState::default();
             return;
-        }
-        let frame = self.pad.touch.frame(Instant::now());
+        };
+        let frame = self.pad.touch.frame(&layout, Instant::now());
         let mut state = PadState {
             left: frame.stick,
             ..PadState::default()
@@ -84,7 +171,8 @@ impl Game<'_> {
         for held in frame.held {
             let button = match held.action() {
                 Some(action) => self.settings.controller.binding(action),
-                None => Some(Button::Start),
+                None if held == TouchButton::Pause => Some(Button::Start),
+                None => None,
             };
             match button {
                 Some(Button::LeftTrigger) => state.triggers[0] = 1.0,
@@ -107,64 +195,238 @@ impl Game<'_> {
         }
     }
 
-    /// The controls over the HUD while playing.
+    /// Moves what was drawn into `batch` since `from` (a vertex count) by the
+    /// hotbar's offset in the touch layout: the hotbar, hearts, food and
+    /// experience bar follow the hotbar wherever the player put it.
+    pub(super) fn touch_follow_hotbar(&self, batch: &mut HudBatch, from: usize) {
+        if !TOUCH_CONTROLS {
+            return;
+        }
+        let safe = self.touch_safe(batch.width, batch.height, batch.scale);
+        let layout = self.pad.touch.layout(batch.width, batch.height, safe);
+        let (dx, dy) = layout.hotbar_offset();
+        if (dx, dy) == (0.0, 0.0) {
+            return;
+        }
+        for v in batch.vertices.iter_mut().skip(from) {
+            v.pos[0] += dx;
+            v.pos[1] += dy;
+        }
+    }
+
+    /// The controls over the HUD while playing, or the layout editor.
     pub(super) fn draw_touch_controls(&self, batch: &mut HudBatch) {
         if !TOUCH_CONTROLS || !self.touch_playing() {
             return;
         }
         let atlas = &self.gui.atlas;
-        let layout = Layout::new(batch.width, batch.height);
-        for (button, area) in &layout.buttons {
-            let face = if self.pad.touch.pressed(*button) {
-                FACE_PRESSED
+        let safe = self.touch_safe(batch.width, batch.height, batch.scale);
+        let layout = self.pad.touch.layout(batch.width, batch.height, safe);
+        if let Some(view) = self.pad.touch.editor() {
+            self.draw_touch_editor(batch, &layout, view);
+            return;
+        }
+        for item in layout.items.iter().filter(|i| !i.hidden) {
+            match item.control {
+                Control::Button(button) => {
+                    let pressed = self.pad.touch.pressed(button);
+                    draw_button(batch, atlas, button, item.area, item.opacity, pressed);
+                }
+                Control::Stick => {
+                    let r = layout.stick_radius;
+                    let (origin, knob, k) = match self.pad.touch.stick(&layout) {
+                        Some((origin, knob)) => (origin, knob, item.opacity),
+                        // At rest it shows faintly where it sits.
+                        None => (layout.stick_home, layout.stick_home, item.opacity * 0.6),
+                    };
+                    disc(batch, atlas, origin, r, faded(FACE, k));
+                    ring(batch, atlas, origin, r, faded(EDGE, k));
+                    disc(batch, atlas, knob, r * 0.4, faded(FACE_PRESSED, k));
+                }
+                Control::Hotbar => {}
+            }
+        }
+    }
+
+    /// The editor: every control (hidden ones dimmed with a red edge), the
+    /// picked one outlined, the toolbar, and what is picked.
+    fn draw_touch_editor(
+        &self,
+        batch: &mut HudBatch,
+        layout: &Layout,
+        view: horizon_client_input::touch::EditorView,
+    ) {
+        let atlas = &self.gui.atlas;
+        batch.fill(atlas, 0.0, 0.0, batch.width, batch.height, SHADE);
+        for item in &layout.items {
+            let k = if item.hidden { 0.35 } else { item.opacity };
+            let a = item.area;
+            match item.control {
+                Control::Button(button) => draw_button(batch, atlas, button, a, k, false),
+                Control::Stick => {
+                    outline(batch, atlas, a, faded(EDGE, 0.5));
+                    let home = layout.stick_home;
+                    disc(batch, atlas, home, layout.stick_radius, faded(FACE, k));
+                    ring(batch, atlas, home, layout.stick_radius, faded(EDGE, k));
+                }
+                Control::Hotbar => outline(batch, atlas, a, faded(EDGE, 0.8)),
+            }
+            if item.hidden {
+                outline(batch, atlas, a, HIDDEN_EDGE);
+            }
+            if view.selected == Some(item.control) {
+                let grown = Area {
+                    x: a.x - 2.0,
+                    y: a.y - 2.0,
+                    w: a.w + 4.0,
+                    h: a.h + 4.0,
+                };
+                outline(batch, atlas, grown, SELECTED);
+                outline(
+                    batch,
+                    atlas,
+                    Area {
+                        x: grown.x + 1.0,
+                        y: grown.y + 1.0,
+                        w: grown.w - 2.0,
+                        h: grown.h - 2.0,
+                    },
+                    SELECTED,
+                );
+            }
+        }
+        let mut bottom = layout.safe.y;
+        for (button, a) in EditorButton::toolbar(layout) {
+            let face = if button == EditorButton::Done {
+                0xd030_8040
             } else {
-                FACE
+                0xc020_2020
             };
-            batch.fill(atlas, area.x, area.y, area.w, area.h, face);
-            outline(batch, atlas, (area.x, area.y, area.w, area.h), EDGE);
-            let label = horizon_client::lang::get(button.label());
-            let label = fit(atlas, &label, area.w - 4.0);
+            batch.fill(atlas, a.x, a.y, a.w, a.h, face);
+            outline(batch, atlas, a, EDGE);
+            let label = horizon_client::lang::get(button.label(view.placement.hidden));
+            let label = fit(atlas, &label, a.w - 4.0);
             let width = HudBatch::text_width(atlas, &label);
             batch.text(
                 atlas,
                 &label,
-                area.x + (area.w - width) / 2.0,
-                area.y + (area.h - 8.0) / 2.0,
-                LABEL,
+                a.x + (a.w - width) / 2.0,
+                a.y + (a.h - 8.0) / 2.0,
+                INK,
                 true,
             );
+            bottom = bottom.max(a.y + a.h);
         }
-        if let Some((origin, knob)) = self.pad.touch.stick() {
-            let r = STICK_RADIUS;
-            batch.fill(atlas, origin.0 - r, origin.1 - r, r * 2.0, r * 2.0, FACE);
-            outline(
-                batch,
-                atlas,
-                (origin.0 - r, origin.1 - r, r * 2.0, r * 2.0),
-                EDGE,
-            );
-            let k = r / 2.5;
-            batch.fill(
-                atlas,
-                knob.0 - k,
-                knob.1 - k,
-                k * 2.0,
-                k * 2.0,
-                FACE_PRESSED,
-            );
-        }
+        let caption = match view.selected {
+            Some(control) => {
+                let name = horizon_client::lang::get(control.label());
+                let p = view.placement;
+                if p.hidden {
+                    horizon_client::lang::get("horizon.touch.edit.hidden").replace("{name}", &name)
+                } else {
+                    horizon_client::lang::get("horizon.touch.edit.caption")
+                        .replace("{name}", &name)
+                        .replace("{size}", &format!("{:.0}", p.size * 100.0))
+                        .replace("{opacity}", &format!("{:.0}", p.opacity * 100.0))
+                }
+            }
+            None => horizon_client::lang::get("horizon.touch.edit.hint"),
+        };
+        let caption = fit(atlas, &caption, layout.safe.w - 8.0);
+        let width = HudBatch::text_width(atlas, &caption);
+        batch.text(
+            atlas,
+            &caption,
+            layout.safe.x + (layout.safe.w - width) / 2.0,
+            bottom + 4.0,
+            INK,
+            true,
+        );
     }
 }
 
 /// On iOS the touch controls are drawn and played.
 pub(super) const TOUCH_CONTROLS: bool = cfg!(target_os = "ios");
 
-/// A one-unit frame round `(x, y, w, h)`.
-fn outline(batch: &mut HudBatch, atlas: &HudAtlas, (x, y, w, h): (f32, f32, f32, f32), c: u32) {
-    batch.fill(atlas, x, y, w, 1.0, c);
-    batch.fill(atlas, x, y + h - 1.0, w, 1.0, c);
-    batch.fill(atlas, x, y + 1.0, 1.0, h - 2.0, c);
-    batch.fill(atlas, x + w - 1.0, y + 1.0, 1.0, h - 2.0, c);
+/// Where the layout is kept: beside `options.txt`.
+fn touch_settings_path() -> std::path::PathBuf {
+    horizon_client::logging::player_dir().join("touch-controls.txt")
+}
+
+/// `colour` with its alpha scaled by `k`.
+fn faded(colour: u32, k: f32) -> u32 {
+    let alpha = ((colour >> 24) as f32 * k.clamp(0.0, 1.0)).round() as u32;
+    (alpha << 24) | (colour & 0x00ff_ffff)
+}
+
+/// A button: its face, edge and icon, at opacity `k`.
+fn draw_button(
+    batch: &mut HudBatch,
+    atlas: &HudAtlas,
+    button: TouchButton,
+    a: Area,
+    k: f32,
+    pressed: bool,
+) {
+    let (face, ink) = if pressed {
+        (FACE_PRESSED, INK_PRESSED)
+    } else {
+        (FACE, INK)
+    };
+    batch.fill(atlas, a.x, a.y, a.w, a.h, faded(face, k));
+    outline(batch, atlas, a, faded(EDGE, k));
+    let icon = icons::icon(button);
+    let px = (a.w.min(a.h) * 0.62 / icons::SIZE as f32).max(0.5);
+    let side = px * icons::SIZE as f32;
+    let (x0, y0) = (a.x + (a.w - side) / 2.0, a.y + (a.h - side) / 2.0);
+    let ink = faded(ink, k);
+    for (row, col, len) in icons::runs(icon) {
+        batch.fill(
+            atlas,
+            x0 + col as f32 * px,
+            y0 + row as f32 * px,
+            len as f32 * px,
+            px,
+            ink,
+        );
+    }
+}
+
+/// A one-unit frame round `a`.
+fn outline(batch: &mut HudBatch, atlas: &HudAtlas, a: Area, c: u32) {
+    batch.fill(atlas, a.x, a.y, a.w, 1.0, c);
+    batch.fill(atlas, a.x, a.y + a.h - 1.0, a.w, 1.0, c);
+    batch.fill(atlas, a.x, a.y + 1.0, 1.0, a.h - 2.0, c);
+    batch.fill(atlas, a.x + a.w - 1.0, a.y + 1.0, 1.0, a.h - 2.0, c);
+}
+
+/// A filled circle, as one span per unit-high row.
+fn disc(batch: &mut HudBatch, atlas: &HudAtlas, (cx, cy): (f32, f32), r: f32, c: u32) {
+    let rows = r.ceil() as i32;
+    for i in -rows..rows {
+        let y = i as f32 + 0.5;
+        let half = (r * r - y * y).max(0.0).sqrt();
+        if half > 0.0 {
+            batch.fill(atlas, cx - half, cy + i as f32, half * 2.0, 1.0, c);
+        }
+    }
+}
+
+/// A circle's one-unit edge.
+fn ring(batch: &mut HudBatch, atlas: &HudAtlas, (cx, cy): (f32, f32), r: f32, c: u32) {
+    let rows = r.ceil() as i32;
+    let inner = (r - 1.0).max(0.0);
+    for i in -rows..rows {
+        let y = i as f32 + 0.5;
+        let outer = (r * r - y * y).max(0.0).sqrt();
+        let within = (inner * inner - y * y).max(0.0).sqrt();
+        if outer <= 0.0 {
+            continue;
+        }
+        let w = (outer - within).max(1.0);
+        batch.fill(atlas, cx - outer, cy + i as f32, w, 1.0, c);
+        batch.fill(atlas, cx + outer - w, cy + i as f32, w, 1.0, c);
+    }
 }
 
 /// `text` cut to `width`, keeping whole characters.

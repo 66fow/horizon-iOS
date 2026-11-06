@@ -8427,7 +8427,9 @@ impl Game<'_> {
         };
         let scale = HudBatch::new(size).scale;
         let was_grabbed = self.captured;
-        if self.options.offscreen && !self.split_window {
+        // iOS has no pointer to grab, as a hidden `--offscreen` run doesn't: the grab is the
+        // game's own, so the world plays (touch.rs turns the view).
+        if (self.options.offscreen && !self.split_window) || cfg!(target_os = "ios") {
             // A genuinely hidden `--offscreen` run leaves the system pointer where
             // the person at the computer has it. Its grab is internal (an
             // agent turns the view with `mouse-move`).
@@ -8857,39 +8859,43 @@ impl Game<'_> {
                     }
                 });
             }
-            self.gui_layer("minecraft:hotbar", &mut batch, |g, batch| {
-                if spectator {
-                    g.draw_spectator_hotbar(batch);
-                } else {
-                    let partial = g.clock.fraction() as f32;
-                    let inputs = hud_layout::HotbarInputs {
-                        selected: g.selected as i32,
-                        right_handed: !g.settings.main_hand_left,
-                        offhand: g.offhand.is_some(),
-                        slots: std::array::from_fn(|i| {
-                            g.inventory[i]
-                                .as_ref()
-                                .map(|_| (f32::from(g.hotbar_pop[i]) - partial).max(0.0))
-                        }),
-                        offhand_pop: (f32::from(g.hotbar_pop[9]) - partial).max(0.0),
-                        attack: (indicator == 2).then_some(strength),
-                    };
-                    let draws = hud_layout::hotbar(wi, hi, &inputs);
-                    hud_layout::paint(batch, &g.gui.atlas, &draws);
-                    for d in &draws {
-                        if let hud_layout::GuiDraw::Item { slot, x, y, .. } = *d {
-                            let stack = if slot == 40 {
-                                g.offhand.as_ref()
-                            } else {
-                                g.inventory[slot as usize].as_ref()
-                            };
-                            if let Some(stack) = stack {
-                                g.draw_item(batch, stack, x as f32, y as f32);
+            {
+                let mark = batch.vertices.len();
+                self.gui_layer("minecraft:hotbar", &mut batch, |g, batch| {
+                    if spectator {
+                        g.draw_spectator_hotbar(batch);
+                    } else {
+                        let partial = g.clock.fraction() as f32;
+                        let inputs = hud_layout::HotbarInputs {
+                            selected: g.selected as i32,
+                            right_handed: !g.settings.main_hand_left,
+                            offhand: g.offhand.is_some(),
+                            slots: std::array::from_fn(|i| {
+                                g.inventory[i]
+                                    .as_ref()
+                                    .map(|_| (f32::from(g.hotbar_pop[i]) - partial).max(0.0))
+                            }),
+                            offhand_pop: (f32::from(g.hotbar_pop[9]) - partial).max(0.0),
+                            attack: (indicator == 2).then_some(strength),
+                        };
+                        let draws = hud_layout::hotbar(wi, hi, &inputs);
+                        hud_layout::paint(batch, &g.gui.atlas, &draws);
+                        for d in &draws {
+                            if let hud_layout::GuiDraw::Item { slot, x, y, .. } = *d {
+                                let stack = if slot == 40 {
+                                    g.offhand.as_ref()
+                                } else {
+                                    g.inventory[slot as usize].as_ref()
+                                };
+                                if let Some(stack) = stack {
+                                    g.draw_item(batch, stack, x as f32, y as f32);
+                                }
                             }
                         }
                     }
-                }
-            });
+                });
+                self.touch_follow_hotbar(&mut batch, mark);
+            }
             self.gui_layer("minecraft:effects", &mut batch, |g, batch| {
                 // The PvP & HUD effects widget takes the icons' place.
                 if !g.pvp_effects_shown() {
@@ -8925,41 +8931,46 @@ impl Game<'_> {
             // The one bar above the hotbar: the mount's jump bar, the locator
             // bar (with its background) or the experience bar, with the level
             // number that a survival player always has.
-            self.gui_layer("minecraft:contextual_info_bar", &mut batch, |g, batch| {
-                if contextual == ContextualBar::JumpableVehicle {
-                    g.draw_jump_bar(batch, wi, hi);
-                }
-                if contextual == ContextualBar::Locator {
-                    let (sprite, [x, y, w, h]) = horizon_client::locator_bar::background(wi, hi);
-                    horizon_client::ui::nine_slice(
-                        batch,
-                        &g.gui.atlas,
-                        sprite,
-                        x as f32,
-                        y as f32,
-                        w as f32,
-                        h as f32,
-                        u32::MAX,
-                    );
-                }
-                if has_experience && g.player.is_some() {
-                    let atlas = &g.gui.atlas;
-                    let width = |s: &str| HudBatch::text_width(atlas, s) as i32;
-                    let draws = hud_layout::experience(
-                        wi,
-                        hi,
-                        g.experience.progress,
-                        g.experience.level,
-                        contextual == ContextualBar::Experience,
-                        &width,
-                    );
-                    hud_layout::paint(batch, atlas, &draws);
-                }
-                if contextual == ContextualBar::Locator {
-                    let draws = g.locator_bar_draws(wi, hi);
-                    hud_layout::paint(batch, &g.gui.atlas, &draws);
-                }
-            });
+            {
+                let mark = batch.vertices.len();
+                self.gui_layer("minecraft:contextual_info_bar", &mut batch, |g, batch| {
+                    if contextual == ContextualBar::JumpableVehicle {
+                        g.draw_jump_bar(batch, wi, hi);
+                    }
+                    if contextual == ContextualBar::Locator {
+                        let (sprite, [x, y, w, h]) =
+                            horizon_client::locator_bar::background(wi, hi);
+                        horizon_client::ui::nine_slice(
+                            batch,
+                            &g.gui.atlas,
+                            sprite,
+                            x as f32,
+                            y as f32,
+                            w as f32,
+                            h as f32,
+                            u32::MAX,
+                        );
+                    }
+                    if has_experience && g.player.is_some() {
+                        let atlas = &g.gui.atlas;
+                        let width = |s: &str| HudBatch::text_width(atlas, s) as i32;
+                        let draws = hud_layout::experience(
+                            wi,
+                            hi,
+                            g.experience.progress,
+                            g.experience.level,
+                            contextual == ContextualBar::Experience,
+                            &width,
+                        );
+                        hud_layout::paint(batch, atlas, &draws);
+                    }
+                    if contextual == ContextualBar::Locator {
+                        let draws = g.locator_bar_draws(wi, hi);
+                        hud_layout::paint(batch, &g.gui.atlas, &draws);
+                    }
+                });
+                self.touch_follow_hotbar(&mut batch, mark);
+            }
             let (visual_ticks, visual_millis) = (self.visual_ticks(), self.visual_millis());
             if !self.creative
                 && !spectator
@@ -9011,9 +9022,13 @@ impl Game<'_> {
                 };
                 // The rows draw in one pass here, so a mod's `player_health`
                 // layer stands for the armor, food and air rows too.
-                self.gui_layer("minecraft:player_health", &mut batch, |g, batch| {
-                    hud_layout::paint(batch, &g.gui.atlas, &draws);
-                });
+                {
+                    let mark = batch.vertices.len();
+                    self.gui_layer("minecraft:player_health", &mut batch, |g, batch| {
+                        hud_layout::paint(batch, &g.gui.atlas, &draws);
+                    });
+                    self.touch_follow_hotbar(&mut batch, mark);
+                }
                 bar_height = self
                     .health_hud
                     .left_height
@@ -9032,9 +9047,13 @@ impl Game<'_> {
                 }
             }
             if !spectator {
-                self.gui_layer("minecraft:selected_item_name", &mut batch, |g, batch| {
-                    g.draw_selected_name(batch, bar_height, !g.creative);
-                });
+                {
+                    let mark = batch.vertices.len();
+                    self.gui_layer("minecraft:selected_item_name", &mut batch, |g, batch| {
+                        g.draw_selected_name(batch, bar_height, !g.creative);
+                    });
+                    self.touch_follow_hotbar(&mut batch, mark);
+                }
             }
         }
         // Hud.extractSleepOverlay: over all health/food bars, under titles and chat.
@@ -22107,11 +22126,13 @@ fn window_size(
 /// iOS gives the window its size after the renderer has configured its
 /// surface, often with no `Resized`: a surface left at the size it started
 /// with draws one stretched pixel, a screen of one colour. The renderer takes
-/// the window's size when they differ. Elsewhere `Resized` does this.
+/// the window's (outer) size when they differ. Elsewhere `Resized` does this.
 fn follow_window_size(window: Option<&Window>, renderer: Option<&mut Renderer>) {
     #[cfg(target_os = "ios")]
     if let (Some(window), Some(renderer)) = (window, renderer) {
-        let size = window.inner_size();
+        // The outer size: the view, and so the surface, covers the whole screen; the inner
+        // size is only the safe area (clear of the notch and the home bar).
+        let size = window.outer_size();
         if size.width > 0
             && size.height > 0
             && (size.width, size.height) != (renderer.config.width, renderer.config.height)

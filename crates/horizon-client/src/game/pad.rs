@@ -42,6 +42,8 @@ pub(super) struct Pads {
     /// virtual pad they hold this iteration.
     pub(super) touch: horizon_client_input::touch::TouchControls,
     pub(super) touch_state: PadState,
+    /// `touch-controls.txt` was read (touch.rs).
+    pub(super) touch_loaded: bool,
     /// The finger acting as the mouse over menus.
     pub(super) touch_mouse: horizon_client_input::touch::TouchMouse,
     /// The virtual pad was in use at the last poll.

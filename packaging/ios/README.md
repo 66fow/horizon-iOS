@@ -6,6 +6,11 @@ anywhere else to look, tap to use or place, hold still to break or attack, butto
 sneak (a toggle), hit, use, drop, chat, view, pause and inventory, and a tap on a hotbar slot
 picks it. They press the buttons bound in Controls > Controller, so rebinding moves them too.
 
+The pencil button (top right) opens the layout editor: drag any control, the stick and the hotbar
+included, to move it; tap one, then Size, Opacity or Hide; Reset puts it back (with nothing picked,
+the buttons change every control); Done keeps the layout in `touch-controls.txt` beside
+`options.txt`.
+
 ## Get the .ipa
 
 `.github/workflows/ios-build.yml` builds it on GitHub's macOS runners, so you don't need a Mac.
