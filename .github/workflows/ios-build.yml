@@ -6,14 +6,9 @@ name: iOS build
 on:
   workflow_dispatch:
   push:
+    # A tag ios-v* builds the .ipa and publishes it as a pre-release, with GitHub's source archives.
+    tags: ["ios-v*"]
     branches: [ios-build]
-    paths:
-      - "crates/**"
-      - "third_party/**"
-      - "packaging/ios/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - ".github/workflows/ios-build.yml"
 
 permissions:
   contents: read
@@ -25,6 +20,8 @@ concurrency:
 jobs:
   ipa:
     runs-on: macos-15
+    permissions:
+      contents: write
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v7
@@ -49,3 +46,13 @@ jobs:
           name: Horizon-ios
           path: dist/Horizon.ipa
           if-no-files-found: error
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/ios-v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp dist/Horizon.ipa "dist/Horizon-$GITHUB_REF_NAME.ipa"
+          gh release create "$GITHUB_REF_NAME" "dist/Horizon-$GITHUB_REF_NAME.ipa" \
+            --repo "$GITHUB_REPOSITORY" --prerelease --verify-tag \
+            --title "Horizon for iOS ($GITHUB_REF_NAME, experimental)" \
+            --notes-file packaging/ios/README.md
