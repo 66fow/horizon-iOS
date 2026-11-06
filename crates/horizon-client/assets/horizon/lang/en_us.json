@@ -829,5 +829,7 @@
   "horizon.touch.edit.done": "Done",
   "horizon.touch.edit.caption": "{name}: size {size}%, opacity {opacity}%",
   "horizon.touch.edit.hidden": "{name}: hidden",
-  "horizon.touch.edit.hint": "Drag a control to move it, or tap one to change it. With none picked, the buttons change them all."
+  "horizon.touch.edit.hint": "Drag a control to move it, or tap one to change it. With none picked, the buttons change them all.",
+  "horizon.touch.escape": "Esc",
+  "horizon.touch.debug": "Debug screen (F3)"
 }

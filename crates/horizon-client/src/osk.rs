@@ -285,6 +285,17 @@ impl Keyboard {
         (x0, y0, height)
     }
 
+    /// Whether `at` (dp) is on the keyboard's panel on a `w` by `h` dp screen.
+    pub fn contains(w: f32, h: f32, at_top: bool, at: (f32, f32)) -> bool {
+        let (x0, y0, height) = Self::origin(w, h, at_top);
+        let width = 10.0 * UNIT + 9.0 * GAP;
+        let margin = 12.0;
+        at.0 >= x0 - margin
+            && at.0 <= x0 + width + margin
+            && at.1 >= y0 - margin
+            && at.1 <= y0 + height + margin
+    }
+
     /// A finger lifted at `at` (dp) on a `w` by `h` dp screen: `Some` when it
     /// was on a key, with what that key gives (as A gives for the focused one).
     pub fn tap(&mut self, w: f32, h: f32, at_top: bool, at: (f32, f32)) -> Option<Option<Output>> {
@@ -471,5 +482,16 @@ mod tests {
         let shift = (x0 + 10.0, y0 + 4.0 * (KEY_H + GAP) + 5.0);
         assert_eq!(k.tap(w, h, false, shift), Some(None));
         assert_eq!(k.tap(w, h, false, q), Some(Some(Output::Text("Q".into()))));
+    }
+
+    #[test]
+    fn a_tap_beside_the_keyboard_is_off_its_panel() {
+        let (w, h) = (1000.0, 700.0);
+        let (x0, y0, _) = Keyboard::origin(w, h, false);
+        assert!(Keyboard::contains(w, h, false, (x0 + 10.0, y0 + 10.0)));
+        // Above it (where the menu's field is) and off to either side.
+        assert!(!Keyboard::contains(w, h, false, (w / 2.0, y0 - 40.0)));
+        assert!(!Keyboard::contains(w, h, false, (5.0, y0 + 10.0)));
+        assert!(!Keyboard::contains(w, h, true, (w / 2.0, h - 20.0)));
     }
 }

@@ -20,6 +20,7 @@ pub fn icon(button: TouchButton) -> &'static Icon {
         TouchButton::Perspective => &PERSPECTIVE,
         TouchButton::Pause => &PAUSE,
         TouchButton::Edit => &EDIT,
+        TouchButton::Debug => &DEBUG,
         TouchButton::Sprint => &SPRINT,
     }
 }
@@ -43,23 +44,6 @@ pub fn runs(icon: &Icon) -> Vec<(usize, usize, usize)> {
     }
     out
 }
-
-/// A cross: the button that closes a menu (an inventory, a crafting table,
-/// chat), as Escape does.
-pub const CLOSE: Icon = [
-    "............",
-    ".##......##.",
-    ".###....###.",
-    "..###..###..",
-    "...######...",
-    "....####....",
-    "....####....",
-    "...######...",
-    "..###..###..",
-    ".###....###.",
-    ".##......##.",
-    "............",
-];
 
 /// An arrow up.
 const JUMP: Icon = [
@@ -202,6 +186,22 @@ const PAUSE: Icon = [
     "..###..###..",
     "..###..###..",
     "..###..###..",
+    "............",
+];
+
+/// "F3".
+const DEBUG: Icon = [
+    "............",
+    "............",
+    "#####.#####.",
+    "#.........#.",
+    "#.........#.",
+    "####...####.",
+    "#.........#.",
+    "#.........#.",
+    "#.........#.",
+    "#....######.",
+    "............",
     "............",
 ];
 

@@ -6,6 +6,10 @@ anywhere else to look, tap to use or place, hold still to break or attack, butto
 sneak (a toggle), hit, use, drop, chat, view, pause and inventory, and a tap on a hotbar slot
 picks it. They press the buttons bound in Controls > Controller, so rebinding moves them too.
 
+In a world, the Esc button (top left) is the keyboard's Escape: playing, it opens the pause menu
+(Save and Quit leaves the world); over an inventory, a crafting table or chat, it closes it. The F3
+button shows the debug screen. A tap away from the on-screen keyboard puts it away.
+
 The pencil button (top right) opens the layout editor: drag any control, the stick and the hotbar
 included, to move it; tap one, then Size, Opacity or Hide; Reset puts it back (with nothing picked,
 the buttons change every control); Done keeps the layout in `touch-controls.txt` beside

@@ -30,13 +30,15 @@ pub enum TouchButton {
     Pause,
     /// Opens the layout editor.
     Edit,
+    /// F3: the debug screen.
+    Debug,
     /// Held while the stick is pushed fully forward; not on screen.
     Sprint,
 }
 
 impl TouchButton {
     /// The buttons on screen, in the order they are laid out.
-    pub const PLACED: [TouchButton; 10] = [
+    pub const PLACED: [TouchButton; 11] = [
         Self::Jump,
         Self::Sneak,
         Self::Attack,
@@ -46,11 +48,13 @@ impl TouchButton {
         Self::Chat,
         Self::Perspective,
         Self::Edit,
+        Self::Debug,
         Self::Inventory,
     ];
 
     /// The key mapping it stands for; `None` for pause (the controller's
-    /// Start) and the editor's button.
+    /// Start), F3 (the keyboard's key, which no controller button has) and
+    /// the editor's button.
     pub fn action(self) -> Option<&'static str> {
         Some(match self {
             Self::Jump => "key.jump",
@@ -62,7 +66,7 @@ impl TouchButton {
             Self::Drop => "key.drop",
             Self::Perspective => "key.togglePerspective",
             Self::Sprint => "key.sprint",
-            Self::Pause | Self::Edit => return None,
+            Self::Pause | Self::Edit | Self::Debug => return None,
         })
     }
 
@@ -79,6 +83,7 @@ impl TouchButton {
             Self::Perspective => "perspective",
             Self::Pause => "pause",
             Self::Edit => "edit",
+            Self::Debug => "debug",
             Self::Sprint => "sprint",
         }
     }
@@ -122,6 +127,7 @@ impl Control {
             Self::Button(TouchButton::Perspective) => "horizon.touch.perspective",
             Self::Button(TouchButton::Pause) => "horizon.touch.pause",
             Self::Button(TouchButton::Edit) => "horizon.touch.edit",
+            Self::Button(TouchButton::Debug) => "horizon.touch.debug",
             Self::Button(TouchButton::Sprint) => "key.sprint",
             Self::Stick => "horizon.touch.stick",
             Self::Hotbar => "horizon.touch.hotbar",
@@ -415,6 +421,7 @@ impl Layout {
             Control::Button(TouchButton::Chat) => top(1.0),
             Control::Button(TouchButton::Perspective) => top(2.0),
             Control::Button(TouchButton::Edit) => top(3.0),
+            Control::Button(TouchButton::Debug) => top(4.0),
             Control::Button(TouchButton::Inventory | TouchButton::Sprint) => Area {
                 x: hotbar.x + hotbar.w + GAP,
                 y: hotbar.y,

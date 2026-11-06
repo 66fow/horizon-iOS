@@ -1942,7 +1942,9 @@ impl Game<'_> {
     }
 
     /// A finger lifted at `at` (GUI pixels) while the on-screen keyboard is
-    /// open (touch.rs): the key under it types, as A does on the focused key.
+    /// open (touch.rs): the key under it types, as A does on the focused key;
+    /// a tap away from the keyboard puts it away, as on a phone (the field
+    /// keeps its text).
     pub(super) fn touch_keyboard(&mut self, at: (f32, f32)) {
         let Some(mut batch) = self.gui_scale() else {
             return;
@@ -1954,8 +1956,13 @@ impl Game<'_> {
         let Some(keyboard) = self.pad.menu.osk.as_mut() else {
             return;
         };
-        if let Some(Some(out)) = keyboard.tap(w, h, at_top, at) {
-            self.pad_osk_output(out);
+        match keyboard.tap(w, h, at_top, at) {
+            Some(Some(out)) => self.pad_osk_output(out),
+            Some(None) => {}
+            None if !Keyboard::contains(w, h, at_top, at) => {
+                self.pad_osk_output(osk::Output::Close)
+            }
+            None => {}
         }
     }
 

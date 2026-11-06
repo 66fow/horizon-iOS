@@ -88,30 +88,45 @@ impl Game<'_> {
         }
     }
 
-    /// The cross that closes the menu over the world (vanilla closes them with
-    /// Escape or the inventory key, which a touch screen lacks): top right in
-    /// the safe area, while a menu is open in a world.
+    /// The Esc button: always top left in the safe area while in a world, as
+    /// the keyboard's Escape. Playing, it opens the pause menu (where Save
+    /// and Quit leaves the world); over a menu (an inventory, a crafting
+    /// table, chat) it closes it, which a touch screen has no key for. Not
+    /// while the layout editor is open (its Done closes it).
     fn touch_close_button(&self, batch: &HudBatch) -> Option<Area> {
-        if !TOUCH_CONTROLS || self.player.is_none() || self.title.is_some() || !self.pad_in_menu() {
+        if !TOUCH_CONTROLS
+            || self.player.is_none()
+            || self.title.is_some()
+            || (self.pad.touch.editing() && !self.pad_in_menu())
+        {
             return None;
         }
         let safe = self.touch_safe(batch.width, batch.height, batch.scale);
-        let side = 22.0;
         Some(Area {
-            x: safe.x + safe.w - side - 4.0,
+            x: safe.x + 4.0,
             y: safe.y + 4.0,
-            w: side,
-            h: side,
+            w: 28.0,
+            h: 20.0,
         })
     }
 
-    /// The menu's cross (`touch_close_button`).
+    /// The Esc button (`touch_close_button`).
     pub(super) fn draw_touch_close(&self, batch: &mut HudBatch) {
         if let Some(a) = self.touch_close_button(batch) {
             let atlas = &self.gui.atlas;
             batch.fill(atlas, a.x, a.y, a.w, a.h, 0xc020_2020);
             outline(batch, atlas, a, EDGE);
-            draw_icon(batch, atlas, &icons::CLOSE, a, INK);
+            let label = horizon_client::lang::get("horizon.touch.escape");
+            let label = fit(atlas, &label, a.w - 4.0);
+            let width = HudBatch::text_width(atlas, &label);
+            batch.text(
+                atlas,
+                &label,
+                a.x + (a.w - width) / 2.0,
+                a.y + (a.h - 8.0) / 2.0,
+                INK,
+                true,
+            );
         }
     }
 
@@ -125,7 +140,7 @@ impl Game<'_> {
     pub(super) fn touch_event(&mut self, touch: Touch) -> Vec<WindowEvent> {
         self.touch_load();
         let mouse = self.pad.touch_mouse.finger() == Some(touch.id);
-        // A menu over the world closes with its cross, as with Escape.
+        // The Esc button, top left in a world: Escape's job.
         if !mouse
             && touch.phase == TouchPhase::Started
             && let Some(batch) = self.gui_scale()
@@ -135,7 +150,7 @@ impl Game<'_> {
                 touch.location.y as f32 / batch.scale,
             ))
         {
-            log::info!("Horizon: touch close");
+            log::info!("Horizon: touch Esc");
             if let Err(e) = self.pad_back() {
                 log::warn!("Horizon: closing the menu: {e}");
             }
@@ -214,6 +229,14 @@ impl Game<'_> {
             left: frame.stick,
             ..PadState::default()
         };
+        // F3 is the keyboard's: pressed and released as the key.
+        let debug = frame.held.contains(&TouchButton::Debug);
+        if debug != self.pad.touch_debug {
+            self.pad.touch_debug = debug;
+            if let Err(e) = self.mapped_key_event(KeyCode::F3, debug, false) {
+                log::warn!("Horizon: touch F3: {e}");
+            }
+        }
         for held in frame.held {
             let button = match held.action() {
                 Some(action) => self.settings.controller.binding(action),
