@@ -1931,6 +1931,43 @@ impl Game<'_> {
         self.pad.menu.osk = Some(Keyboard::default());
     }
 
+    /// The on-screen keyboard is at the top: the field it types into is in
+    /// the lower half of a screen `height` GUI pixels tall, or it is chat.
+    fn osk_at_top(&self, height: f32) -> bool {
+        self.pad
+            .menu
+            .focus
+            .is_some_and(|f| f.center().1 > height / 2.0)
+            || self.screen == Screen::Chat
+    }
+
+    /// A finger lifted at `at` (GUI pixels) while the on-screen keyboard is
+    /// open (touch.rs): the key under it types, as A does on the focused key.
+    pub(super) fn touch_keyboard(&mut self, at: (f32, f32)) {
+        let Some(mut batch) = self.gui_scale() else {
+            return;
+        };
+        let at_top = self.osk_at_top(batch.height);
+        let ui = horizon_client::ui_theme::Ui::new(&self.gui.atlas, &mut batch, at);
+        let (w, h, at) = (ui.w, ui.h, ui.cursor);
+        drop(ui);
+        let Some(keyboard) = self.pad.menu.osk.as_mut() else {
+            return;
+        };
+        if let Some(Some(out)) = keyboard.tap(w, h, at_top, at) {
+            self.pad_osk_output(out);
+        }
+    }
+
+    /// A finger lifted over a menu (touch.rs): on a text field, the
+    /// on-screen keyboard opens, as A does there with a controller. iOS has
+    /// no other keyboard for the game yet.
+    pub(super) fn touch_tapped(&mut self) {
+        if self.pad.menu.osk.is_none() && field_at(&self.pad_targets(), self.cursor) {
+            self.pad_open_keyboard();
+        }
+    }
+
     /// Chat or a sign opened by the pad (either menu mode): the keyboard
     /// opens with it (once per screen; B closes it for good). Not the chat a
     /// sleeper gets (`InBedChatScreen`): the game opens that one, not the
@@ -2034,12 +2071,7 @@ impl Game<'_> {
             return;
         }
         if let Some(keyboard) = &self.pad.menu.osk {
-            let at_top = self
-                .pad
-                .menu
-                .focus
-                .is_some_and(|f| f.center().1 > batch.height / 2.0)
-                || self.screen == Screen::Chat;
+            let at_top = self.osk_at_top(batch.height);
             let mut ui = horizon_client::ui_theme::Ui::new(&self.gui.atlas, batch, self.cursor);
             let options = &self.ui.options;
             keyboard.draw(&mut ui, at_top, options.pad_style, options.pad_by_letter);

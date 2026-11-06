@@ -24,45 +24,98 @@ pub enum Action {
     /// Open the launcher's download page.
     Download,
     Quit,
+    /// Look for the files again (iOS, where they are copied in by hand).
+    Check,
 }
 
 pub struct NoResources {
-    /// Where the prepared files were looked for, for whoever starts the game by hand on purpose.
-    looked_in: String,
+    title: String,
+    paragraphs: Vec<String>,
+    /// The first is the main one, drawn in the accent colour.
+    buttons: Vec<(String, Action)>,
+    /// Where the prepared files were looked for, for whoever starts the game by hand on purpose,
+    /// and other small print.
+    small: Vec<String>,
+    /// The text column's widest, in dp.
+    column: f32,
 }
 
 impl NoResources {
     pub fn new(looked_in: &std::path::Path) -> Self {
         let shown = std::path::absolute(looked_in).unwrap_or_else(|_| looked_in.to_path_buf());
         Self {
-            looked_in: format!("No prepared game files in {}", shown.display()),
+            title: TITLE.to_owned(),
+            paragraphs: PARAGRAPHS.iter().map(|p| (*p).to_owned()).collect(),
+            buttons: vec![
+                ("Download the launcher".to_owned(), Action::Download),
+                ("Quit".to_owned(), Action::Quit),
+            ],
+            small: vec![format!("No prepared game files in {}", shown.display())],
+            column: COLUMN,
         }
+    }
+
+    /// The phone and tablet version (iOS): there is no launcher there, so it
+    /// says how to bring the prepared files over, and looks for them again.
+    pub fn mobile(looked_in: &std::path::Path) -> Self {
+        let shown = std::path::absolute(looked_in).unwrap_or_else(|_| looked_in.to_path_buf());
+        let get = crate::lang::get;
+        Self {
+            title: get("horizon.mobile.title"),
+            paragraphs: [
+                "horizon.mobile.files_missing",
+                "horizon.mobile.why",
+                "horizon.mobile.step1",
+                "horizon.mobile.step2",
+                "horizon.mobile.step3",
+                "horizon.mobile.step4",
+            ]
+            .into_iter()
+            .map(get)
+            .collect(),
+            buttons: vec![(get("horizon.mobile.check"), Action::Check)],
+            small: vec![
+                get("horizon.mobile.looked_in").replace("{path}", &shown.display().to_string()),
+                get("horizon.mobile.logs"),
+            ],
+            column: f32::INFINITY,
+        }
+    }
+
+    /// The files turned up (iOS): say so, in place of the steps.
+    pub fn found(&mut self) {
+        self.paragraphs = vec![crate::lang::get("horizon.mobile.files_found")];
+        self.buttons.clear();
     }
 
     /// The buttons' labels, actions and rectangles in dp, and the paragraphs' wrapped
     /// lines: one layout for drawing and clicks.
     fn layout(&self, ui: &Ui) -> Layout {
-        let width = COLUMN.min(ui.w - 64.0).max(160.0);
+        let width = self.column.min(ui.w - 64.0).max(160.0);
         let x = ((ui.w - width) / 2.0).round();
-        let lines: Vec<Vec<String>> = PARAGRAPHS
+        let lines: Vec<Vec<String>> = self
+            .paragraphs
             .iter()
             .map(|p| wrap(ui, Face::Regular, BODY, p, width))
             .collect();
         let text_h = lines.iter().map(|l| l.len() as f32 * LINE).sum::<f32>()
-            + (lines.len() - 1) as f32 * PARAGRAPH_GAP;
-        let height = TITLE_LINE + 16.0 + text_h + 28.0 + CONTROL + 20.0 + SMALL_LINE;
+            + lines.len().saturating_sub(1) as f32 * PARAGRAPH_GAP;
+        let small_lines: usize = self
+            .small
+            .iter()
+            .map(|s| wrap(ui, Face::Regular, ui_theme::SMALL, s, width).len())
+            .sum();
+        let height =
+            TITLE_LINE + 16.0 + text_h + 28.0 + CONTROL + 20.0 + small_lines as f32 * SMALL_LINE;
         let y = ((ui.h - height) / 2.0).max(24.0).round();
         let buttons_y = y + TITLE_LINE + 16.0 + text_h + 28.0;
         let mut buttons = Vec::new();
         let mut bx = x;
-        for (label, action) in [
-            ("Download the launcher", Action::Download),
-            ("Quit", Action::Quit),
-        ] {
+        for (label, action) in &self.buttons {
             let w = (ui.measure(Face::Medium, BUTTON_TEXT, label) + 40.0).round();
             buttons.push(Button {
-                label,
-                action,
+                label: label.clone(),
+                action: *action,
                 x: bx,
                 y: buttons_y,
                 w,
@@ -89,7 +142,7 @@ impl NoResources {
             layout.x,
             y,
             color::TEXT,
-            TITLE,
+            &self.title,
         );
         y += TITLE_LINE + 16.0;
         for paragraph in &layout.lines {
@@ -101,17 +154,16 @@ impl NoResources {
         }
         for button in &layout.buttons {
             let hovered = button.contains(ui.cursor);
-            let (plate, ink) = match (button.action, hovered) {
-                (Action::Download, false) => (color::ACCENT, color::ON_ACCENT),
-                (Action::Download, true) => {
-                    (color::with_alpha(color::ACCENT, 0.85), color::ON_ACCENT)
-                }
-                (Action::Quit, false) => (color::RAISED, color::TEXT),
-                (Action::Quit, true) => (color::HOVER, color::TEXT),
+            let main = button.action != Action::Quit;
+            let (plate, ink) = match (main, hovered) {
+                (true, false) => (color::ACCENT, color::ON_ACCENT),
+                (true, true) => (color::with_alpha(color::ACCENT, 0.85), color::ON_ACCENT),
+                (false, false) => (color::RAISED, color::TEXT),
+                (false, true) => (color::HOVER, color::TEXT),
             };
             let h = CONTROL;
             ui.rounded(button.x, button.y, button.w, h, h / 2.0, plate);
-            let lw = ui.measure(Face::Medium, BUTTON_TEXT, button.label);
+            let lw = ui.measure(Face::Medium, BUTTON_TEXT, &button.label);
             let lx = button.x + ((button.w - lw) / 2.0).round();
             ui.text_line(
                 Face::Medium,
@@ -120,20 +172,16 @@ impl NoResources {
                 lx,
                 button.y,
                 ink,
-                button.label,
+                &button.label,
             );
         }
-        let small_y = layout.buttons[0].y + CONTROL + 20.0;
-        for (i, line) in wrap(
-            ui,
-            Face::Regular,
-            ui_theme::SMALL,
-            &self.looked_in,
-            layout.width,
-        )
-        .iter()
-        .enumerate()
-        {
+        let small_y = y + 28.0 - PARAGRAPH_GAP + CONTROL + 20.0;
+        let small: Vec<String> = self
+            .small
+            .iter()
+            .flat_map(|s| wrap(ui, Face::Regular, ui_theme::SMALL, s, layout.width))
+            .collect();
+        for (i, line) in small.iter().enumerate() {
             let line_y = small_y + i as f32 * SMALL_LINE;
             ui.text_line(
                 Face::Regular,
@@ -175,7 +223,7 @@ struct Layout {
 }
 
 struct Button {
-    label: &'static str,
+    label: String,
     action: Action,
     x: f32,
     y: f32,

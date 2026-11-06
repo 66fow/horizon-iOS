@@ -148,6 +148,11 @@ const SYMBOLS: [Row; 5] = [
     BOTTOM,
 ];
 
+/// A key unit's width, the gap between keys and a key's height, in dp.
+const UNIT: f32 = 50.0;
+const GAP: f32 = 6.0;
+const KEY_H: f32 = 38.0;
+
 /// The keyboard's state while open.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Keyboard {
@@ -271,17 +276,40 @@ impl Keyboard {
         }
     }
 
+    /// The keys' top left corner and the panel's height on a `w` by `h` dp screen.
+    fn origin(w: f32, h: f32, at_top: bool) -> (f32, f32, f32) {
+        let width = 10.0 * UNIT + 9.0 * GAP;
+        let height = 5.0 * KEY_H + 4.0 * GAP + 24.0 + 30.0;
+        let x0 = ((w - width) / 2.0).round();
+        let y0 = if at_top { 16.0 } else { h - height - 16.0 };
+        (x0, y0, height)
+    }
+
+    /// A finger lifted at `at` (dp) on a `w` by `h` dp screen: `Some` when it
+    /// was on a key, with what that key gives (as A gives for the focused one).
+    pub fn tap(&mut self, w: f32, h: f32, at_top: bool, at: (f32, f32)) -> Option<Option<Output>> {
+        let (x0, y0, _) = Self::origin(w, h, at_top);
+        let r = ((at.1 - y0) / (KEY_H + GAP)).floor();
+        if r < 0.0 || r >= 5.0 || at.1 - y0 - r * (KEY_H + GAP) > KEY_H {
+            return None;
+        }
+        let row = self.rows()[r as usize];
+        let units = (at.0 - x0 + GAP / 2.0) / (UNIT + GAP);
+        let col = (0..row.len()).find(|&i| {
+            let (left, width) = Self::span(row, i);
+            units >= left && units < left + width
+        })?;
+        self.row = r as usize;
+        self.col = col;
+        Some(self.press())
+    }
+
     /// Draw the keyboard across the bottom of the screen, or the top when
     /// the field it types into is in the lower half. `by_letter`: the pad goes by its letters
     /// and the glyphs are Nintendo's, so a hint names the button playing its part.
     pub fn draw(&self, ui: &mut Ui, at_top: bool, glyphs: GlyphStyle, by_letter: bool) {
-        const UNIT: f32 = 50.0;
-        const GAP: f32 = 6.0;
-        const KEY_H: f32 = 38.0;
         let width = 10.0 * UNIT + 9.0 * GAP;
-        let height = 5.0 * KEY_H + 4.0 * GAP + 24.0 + 30.0;
-        let x0 = ((ui.w - width) / 2.0).round();
-        let y0 = if at_top { 16.0 } else { ui.h - height - 16.0 };
+        let (x0, y0, height) = Self::origin(ui.w, ui.h, at_top);
         ui.rounded(
             x0 - 12.0,
             y0 - 12.0,
@@ -417,5 +445,31 @@ mod tests {
         assert_eq!(k.button(Button::West), Some(Output::Backspace));
         assert_eq!(k.button(Button::East), Some(Output::Close));
         assert_eq!(k.button(Button::Start), Some(Output::Enter));
+    }
+
+    #[test]
+    fn a_tap_types_the_key_under_the_finger() {
+        let (w, h) = (1000.0, 700.0);
+        let (x0, y0, _) = Keyboard::origin(w, h, false);
+        let mut k = Keyboard::default();
+        // Row 1 starts with q; the middle of its first key.
+        let q = (x0 + UNIT / 2.0, y0 + (KEY_H + GAP) + KEY_H / 2.0);
+        assert_eq!(k.tap(w, h, false, q), Some(Some(Output::Text("q".into()))));
+        // The second key of the number row.
+        let two = (x0 + UNIT + GAP + UNIT / 2.0, y0 + 1.0);
+        assert_eq!(
+            k.tap(w, h, false, two),
+            Some(Some(Output::Text("2".into())))
+        );
+        // Above the keys, and in the gap between two rows: no key.
+        assert_eq!(k.tap(w, h, false, (x0 + 10.0, y0 - 5.0)), None);
+        assert_eq!(
+            k.tap(w, h, false, (x0 + 10.0, y0 + KEY_H + GAP / 2.0)),
+            None
+        );
+        // Shift changes the keyboard and types nothing; the next letter is a capital.
+        let shift = (x0 + 10.0, y0 + 4.0 * (KEY_H + GAP) + 5.0);
+        assert_eq!(k.tap(w, h, false, shift), Some(None));
+        assert_eq!(k.tap(w, h, false, q), Some(Some(Output::Text("Q".into()))));
     }
 }

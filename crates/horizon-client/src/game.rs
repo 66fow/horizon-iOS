@@ -265,6 +265,7 @@ mod packs;
 mod pad;
 mod pad_actions;
 mod pad_menu;
+mod touch;
 mod paintings;
 mod pandas;
 mod particle_culling;
@@ -8733,6 +8734,7 @@ impl Game<'_> {
         self.frame_graph
             .draw(self.settings.horizon.overlay, &mut batch, &self.gui.atlas);
         self.draw_pad_cursor(&mut batch);
+        self.draw_touch_controls(&mut batch);
         batch
     }
     fn hud_layers(&mut self, size: [u32; 2]) -> HudBatch {
@@ -17589,6 +17591,21 @@ impl ApplicationHandler for Game<'_> {
         self.previous = Instant::now();
     }
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        // iOS sends touches and no mouse: the touch controls while playing,
+        // else the first finger is the mouse (touch.rs).
+        #[cfg(target_os = "ios")]
+        if let WindowEvent::Touch(touch) = event {
+            let lifted = touch.phase == winit::event::TouchPhase::Ended;
+            let events = self.touch_event(touch);
+            let clicked = lifted && !events.is_empty();
+            for event in events {
+                self.window_event(event_loop, id, event);
+            }
+            if clicked {
+                self.touch_tapped();
+            }
+            return;
+        }
         let key = if self.window.as_ref().is_some_and(|w| w.id() == id)
             && let WindowEvent::KeyboardInput {
                 event,
@@ -17629,6 +17646,7 @@ impl ApplicationHandler for Game<'_> {
         }
     }
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        follow_window_size(self.window.as_deref(), self.renderer.as_mut());
         self.idle(event_loop);
     }
     /// The application is ending. On macOS, Quit (Cmd+Q) ends it through
@@ -21783,6 +21801,7 @@ impl Loading {
         self.ui_at = Some(Instant::now());
     }
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        follow_window_size(self.window.as_deref(), self.renderer.as_mut());
         // The loop may run once more after exit(): keep the first error, the
         // one that ended loading.
         if self.error.is_some() {
@@ -21949,9 +21968,10 @@ impl ApplicationHandler for App {
         }
     }
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
-        // iOS sends touches and no mouse: the first finger is the mouse.
+        // iOS sends touches and no mouse: while loading, the first finger is
+        // the mouse; the game itself handles them once it is ready (touch.rs).
         #[cfg(target_os = "ios")]
-        if matches!(event, WindowEvent::Touch(_)) {
+        if matches!(self, App::Loading(_)) && matches!(event, WindowEvent::Touch(_)) {
             thread_local! {
                 static TOUCH: std::cell::RefCell<horizon_client_input::touch::TouchMouse> =
                     Default::default();
@@ -22021,6 +22041,31 @@ impl ApplicationHandler for App {
             game.exiting(event_loop);
         }
     }
+}
+
+/// iOS gives the window its size after the renderer has configured its
+/// surface, often with no `Resized`: a surface left at the size it started
+/// with draws one stretched pixel, a screen of one colour. The renderer takes
+/// the window's size when they differ. Elsewhere `Resized` does this.
+fn follow_window_size(window: Option<&Window>, renderer: Option<&mut Renderer>) {
+    #[cfg(target_os = "ios")]
+    if let (Some(window), Some(renderer)) = (window, renderer) {
+        let size = window.inner_size();
+        if size.width > 0
+            && size.height > 0
+            && (size.width, size.height) != (renderer.config.width, renderer.config.height)
+        {
+            log::info!(
+                "Horizon: the window is {}x{}: resizing the surface",
+                size.width,
+                size.height
+            );
+            renderer.resize(size.width, size.height);
+            window.request_redraw();
+        }
+    }
+    #[cfg(not(target_os = "ios"))]
+    let _ = (window, renderer);
 }
 
 /// Every launch reads the prepared game files (`horizon-prepare`'s output, whose

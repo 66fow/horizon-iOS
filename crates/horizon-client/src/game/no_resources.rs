@@ -15,6 +15,8 @@ struct Missing {
     pointer: (f64, f64),
     api: horizon_client::graphics::GraphicsApi,
     error: Option<Box<dyn std::error::Error>>,
+    /// Where the files were looked for, to look again (iOS).
+    looked_in: std::path::PathBuf,
 }
 
 /// Shows the screen until the player closes it.
@@ -26,10 +28,20 @@ pub(super) fn show(looked_in: &std::path::Path, settings: &Settings) -> Result<(
             atlas: HudAtlas::build(looked_in)?,
             panorama: Arc::new(horizon_client::gfx::panorama::Faces::colour([0; 4])),
         },
-        screen: NoResources::new(looked_in),
+        screen: if super::touch::TOUCH_CONTROLS {
+            // Horizon's own strings, which need no prepared files.
+            horizon_client::lang::set(horizon_client::lang::Language::load(
+                &[],
+                &settings.language,
+            ));
+            NoResources::mobile(looked_in)
+        } else {
+            NoResources::new(looked_in)
+        },
         pointer: (0.0, 0.0),
         api: settings.horizon.api,
         error: None,
+        looked_in: looked_in.to_path_buf(),
     };
     horizon_client::hud::GUI_SCALE.store(settings.gui_scale, Ordering::Relaxed);
     EventLoop::new()?.run_app(&mut app)?;
@@ -60,6 +72,7 @@ impl Missing {
     }
 
     fn draw(&mut self) {
+        super::follow_window_size(self.window.as_deref(), self.renderer.as_mut());
         let mut batch = HudBatch::new(self.size());
         self.with_ui(&mut batch, |ui| self.screen.draw(ui));
         let Some(renderer) = &mut self.renderer else {
@@ -83,6 +96,18 @@ impl Missing {
         match self.with_ui(&mut batch, |ui| self.screen.click(ui)) {
             Some(Action::Download) => packs::open_uri(DOWNLOAD_URL),
             Some(Action::Quit) => event_loop.exit(),
+            Some(Action::Check) => {
+                let found = super::missing_resources(&self.looked_in).is_none();
+                log::info!("Horizon: looked for the game files again: found {found}");
+                if found {
+                    // iOS runs one event loop for the app's life: the game starts
+                    // on the next launch.
+                    self.screen.found();
+                }
+                if let Some(window) = &self.window {
+                    window.request_redraw();
+                }
+            }
             None => {}
         }
     }
@@ -138,6 +163,16 @@ impl ApplicationHandler for Missing {
                 window.request_redraw();
             }
             WindowEvent::RedrawRequested => self.draw(),
+            // iOS sends touches and no mouse: the first finger is the mouse.
+            WindowEvent::Touch(touch) if super::touch::TOUCH_CONTROLS => {
+                thread_local! {
+                    static TOUCH: std::cell::RefCell<horizon_client_input::touch::TouchMouse> =
+                        Default::default();
+                }
+                for event in TOUCH.with_borrow_mut(|t| t.translate(WindowEvent::Touch(touch))) {
+                    self.window_event(event_loop, id, event);
+                }
+            }
             WindowEvent::CursorMoved { position, .. } => {
                 self.pointer = (position.x, position.y);
                 window.request_redraw();
@@ -166,5 +201,12 @@ impl ApplicationHandler for Missing {
         event_loop.set_control_flow(ControlFlow::WaitUntil(
             Instant::now() + Duration::from_millis(250),
         ));
+        // iOS may show the window after its first frames were presented, and
+        // sends no event that would draw it again: draw at each wake there.
+        if super::touch::TOUCH_CONTROLS
+            && let Some(window) = &self.window
+        {
+            window.request_redraw();
+        }
     }
 }

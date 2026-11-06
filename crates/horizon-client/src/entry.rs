@@ -19,6 +19,8 @@ pub fn main_with(mods: crate::mod_api::Mods) {
         let documents = std::path::Path::new(&home).join("Documents");
         let _ = std::fs::create_dir_all(&documents);
         let _ = std::env::set_current_dir(&documents);
+        // The log and crash reports go there too, where the Files app shows them.
+        logging::set_game_home(documents);
     }
     horizon_threads::configure_allocator();
     horizon_client::telemetry::mark_start();

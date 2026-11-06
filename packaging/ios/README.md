@@ -1,8 +1,10 @@
 # Horizon on iPhone and iPad (experimental)
 
-An early, unofficial iOS build. It starts the game and shows its menus. A tap clicks and a drag
-moves the cursor, so menu buttons work. Playing in a world needs touch controls that do not exist
-yet (see "What is missing" below).
+An early, unofficial iOS build. Over menus a tap clicks and a drag moves the cursor. In a world,
+on-screen controls play: a stick on the left (push it all the way forward to sprint), drag
+anywhere else to look, tap to use or place, hold still to break or attack, buttons for jump,
+sneak (a toggle), hit, use, drop, chat, view, pause and inventory, and a tap on a hotbar slot
+picks it. They press the buttons bound in Controls > Controller, so rebinding moves them too.
 
 ## Get the .ipa
 
@@ -22,15 +24,30 @@ A free Apple ID's signature lasts 7 days: sideload again (your saves stay) to ke
 
 ## Give it the game's resources
 
-Horizon ships none of Mojang's files. Prepare them on a PC from your own copy of Java Edition
-26.3 with `horizon-prepare` (or the launcher). Then copy the prepared folder, the one that holds
-`horizon-resources.json`, onto the iPhone with the Files app or Finder/iTunes file sharing, as
-**On My iPhone → Horizon → resources**. Saves and `options.txt` are kept in the same Horizon folder.
+Horizon ships none of Mojang's files. They are prepared from your own copy of Java Edition 26.3,
+then copied into **On My iPhone → Horizon → resources** (the folder that holds
+`horizon-resources.json`). Saves, `options.txt` and `logs/` are kept in the same Horizon folder.
+Without them the app shows how to get them, with a Check again button.
+
+**On a PC:** prepare them with the launcher or `horizon-prepare`, and copy the folder over with
+the Files app or Finder/iTunes file sharing.
+
+**With only a phone:** let GitHub prepare them, in a repository of your own that is **private**
+(a public one would share Mojang's files):
+
+1. Make a new private repository and add `packaging/ios/prepare/prepare-game-files.yml` to it as
+   `.github/workflows/prepare-game-files.yml`.
+2. Open **Actions → Prepare game files → Run workflow**, tick that you own Java Edition, run it.
+   It downloads 26.3 from Mojang, checks it against `research-lock.json` and prepares it
+   (about 20 minutes).
+3. Open the release it makes in Safari, download `horizon-resources.zip`, tap it in the Files
+   app to unzip it, and move the `resources` folder into **On My iPhone → Horizon**.
+4. Open Horizon (close it first if it was showing the files screen).
 
 ## What is missing
 
-- Touch controls in the world: a movement stick, looking around by dragging, jump, sneak,
-  attack, use and hotbar buttons, and a way to open the inventory and chat.
+- The PC launcher's pages: Microsoft sign-in (online servers), instances, the mod browser,
+  modpacks, servers and the wardrobe. Single player and LAN play without them.
 - An on-screen keyboard for text fields (world names, chat, server addresses).
 - The system clipboard (UIPasteboard). Copied text stays in the game for now.
 - Controllers: gilrs has no iOS backend (GameController.framework would be one).

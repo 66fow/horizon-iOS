@@ -1,0 +1,77 @@
+# Prepares Horizon's game files from Minecraft: Java Edition 26.3 for the iOS build, for a player
+# who has no computer to run the launcher on. Copy this file to .github/workflows/ in your own
+# PRIVATE repository: the release it makes holds Mojang's files, which must not be public. Run it
+# only if you own Java Edition. Then download the release's horizon-resources.zip on the iPhone
+# (packaging/ios/README.md).
+name: Prepare game files
+
+on:
+  workflow_dispatch:
+    inputs:
+      i_own_java_edition:
+        description: "I own Minecraft: Java Edition, and this repository is private"
+        type: boolean
+        required: true
+      horizon_repo:
+        description: "The Horizon fork to prepare with"
+        default: meehandaniel4/horizon
+      horizon_ref:
+        description: "Its branch"
+        default: ios-build
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Check
+        env:
+          OWNS: ${{ inputs.i_own_java_edition }}
+          PRIVATE: ${{ github.event.repository.private }}
+        run: |
+          [ "$OWNS" = true ] || { echo "Tick 'I own Minecraft: Java Edition' to run this."; exit 1; }
+          [ "$PRIVATE" = true ] || { echo "This repository is public: make it private first, or Mojang's files would be shared."; exit 1; }
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.horizon_repo }}
+          ref: ${{ inputs.horizon_ref }}
+          path: horizon
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: horizon
+      - name: Build horizon-prepare
+        working-directory: horizon
+        run: cargo build --release --locked -p horizon-prepare
+      - name: Download Minecraft from Mojang
+        run: python3 horizon/packaging/ios/prepare/fetch_minecraft.py horizon "$RUNNER_TEMP/minecraft"
+      - name: Prepare
+        run: |
+          mc=$RUNNER_TEMP/minecraft
+          horizon/target/release/horizon-prepare --prepare --complete \
+            --root horizon \
+            --version-json "$mc/version.json" --client-jar "$mc/client.jar" \
+            --libraries-dir "$mc/libraries" --assets-dir "$mc/assets" \
+            --server-jar "$mc/server.jar" --java-home "$JAVA_HOME" \
+            --output "$RUNNER_TEMP/out/resources"
+      - name: Zip
+        run: |
+          cd "$RUNNER_TEMP/out"
+          zip -qr "$RUNNER_TEMP/horizon-resources.zip" resources
+          ls -lh "$RUNNER_TEMP/horizon-resources.zip"
+      - name: Publish (in this private repository)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=files-$GITHUB_RUN_NUMBER
+          gh release create "$tag" "$RUNNER_TEMP/horizon-resources.zip" --repo "$GITHUB_REPOSITORY" \
+            --title "Horizon game files (run $GITHUB_RUN_NUMBER)" \
+            --notes "Open this page in Safari on the iPhone, download horizon-resources.zip, tap it in the Files app to unzip, and move the resources folder to On My iPhone > Horizon."

@@ -38,6 +38,12 @@ pub(super) struct Pads {
     devices: hardware::Devices,
     /// The virtual pad of `horizon-ctl pad`.
     injected: PadState,
+    /// The on-screen touch controls while playing (touch.rs), and the
+    /// virtual pad they hold this iteration.
+    pub(super) touch: horizon_client_input::touch::TouchControls,
+    pub(super) touch_state: PadState,
+    /// The finger acting as the mouse over menus.
+    pub(super) touch_mouse: horizon_client_input::touch::TouchMouse,
     /// The virtual pad was in use at the last poll.
     virtual_input: bool,
     /// Buttons a `pad ... tap` releases at the next poll.
@@ -247,7 +253,9 @@ impl Game<'_> {
 
     /// Once per loop iteration: read the pads and act on button changes.
     pub(super) fn poll_pads(&mut self, event_loop: &dyn EventLoopCtl) {
-        self.pad.virtual_input = self.pad.injected != PadState::default();
+        self.touch_frame();
+        self.pad.virtual_input =
+            self.pad.injected != PadState::default() || self.pad.touch_state != PadState::default();
         let context = self.pad_context();
         if let Some(old) = self.pad.context.filter(|old| *old != context) {
             if old.screen != context.screen {
@@ -297,7 +305,9 @@ impl Game<'_> {
         self.ui.options.pad_by_letter =
             style == GlyphStyle::Nintendo && self.pad.by_letter(&self.settings.controller);
         self.ui.options.pad_driving = self.pad.in_use && self.pad_focus_mode();
-        let mut state = hardware.merge(&self.pad.injected);
+        let mut state = hardware
+            .merge(&self.pad.injected)
+            .merge(&self.pad.touch_state);
         let activity = self.pad.activity.observe(&state, &self.settings.controller);
         for (i, (stick, deadzone)) in [
             (&mut state.left, self.settings.controller.move_deadzone),
