@@ -17559,8 +17559,7 @@ impl ApplicationHandler for Game<'_> {
         // `--offscreen` renders into a texture: its window would only show white.
         let window_step = startup::step("window.create");
         let window = match event_loop.create_window(
-            attributes
-                .with_inner_size(winit::dpi::LogicalSize::new(size[0], size[1]))
+            window_size(attributes, size)
                 .with_fullscreen(fullscreen.then_some(winit::window::Fullscreen::Borderless(None)))
                 .with_visible(!self.options.offscreen),
         ) {
@@ -21685,8 +21684,7 @@ impl Loading {
         // `--offscreen` renders into a texture: its window would only show white.
         let window_step = startup::step("window.create");
         let window = match event_loop.create_window(
-            attributes
-                .with_inner_size(winit::dpi::LogicalSize::new(size[0], size[1]))
+            window_size(attributes, size)
                 .with_fullscreen(fullscreen.then_some(winit::window::Fullscreen::Borderless(None)))
                 .with_visible(!self.options.as_ref().is_some_and(|o| o.offscreen)),
         ) {
@@ -22040,6 +22038,19 @@ impl ApplicationHandler for App {
         if let App::Ready(game) = self {
             game.exiting(event_loop);
         }
+    }
+}
+
+/// `attributes` sized `size` (logical pixels). An iOS window always fills the screen: a size
+/// asked for there makes the window that size, larger than the screen, so the frame is cut off.
+fn window_size(
+    attributes: winit::window::WindowAttributes,
+    size: [f64; 2],
+) -> winit::window::WindowAttributes {
+    if cfg!(target_os = "ios") {
+        attributes
+    } else {
+        attributes.with_inner_size(winit::dpi::LogicalSize::new(size[0], size[1]))
     }
 }
 
