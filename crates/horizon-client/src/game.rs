@@ -265,7 +265,6 @@ mod packs;
 mod pad;
 mod pad_actions;
 mod pad_menu;
-mod touch;
 mod paintings;
 mod pandas;
 mod particle_culling;
@@ -351,6 +350,7 @@ mod text_displays;
 mod titles;
 mod tnt;
 mod totem;
+mod touch;
 mod trading;
 mod transient_blocks;
 mod trial_spawner;
@@ -21605,7 +21605,7 @@ fn run_event_loop(mut game: Game<'_>) -> Result<()> {
         return game.error.take().map_or(Ok(()), Err);
     }
     let mut split = split::Split::new(game);
-    let result = EventLoop::new()?.run_app(&mut split);
+    let result = EventLoop::new()?.run_app(&mut BigStack(&mut split));
     game = split.host;
     narrator::stop();
     leave_fullscreen_after(&result, &mut game.settings);
@@ -22041,6 +22041,56 @@ impl ApplicationHandler for App {
     }
 }
 
+/// The event loop's handler, run on a big stack on iOS. iOS gives the main thread 1 MB of stack,
+/// fixed (8 MB on macOS and Linux, and Windows' is raised to 8 MB in build.rs): finishing the
+/// loading screen alone takes over half of it, and it overflowed there (SIGSEGV in
+/// `Loading::finish`). Each callback runs on a fresh 64 MB stack (reserved, not used, until it
+/// is touched); elsewhere the handler runs as it is.
+struct BigStack<'a, A>(&'a mut A);
+
+impl<A> BigStack<'_, A> {
+    #[inline]
+    fn run<R>(&mut self, f: impl FnOnce(&mut A) -> R) -> R {
+        #[cfg(target_os = "ios")]
+        {
+            let app = &mut *self.0;
+            stacker::maybe_grow(4 << 20, 64 << 20, move || f(app))
+        }
+        #[cfg(not(target_os = "ios"))]
+        f(self.0)
+    }
+}
+
+impl<A: ApplicationHandler> ApplicationHandler for BigStack<'_, A> {
+    fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: winit::event::StartCause) {
+        self.run(|a| a.new_events(event_loop, cause));
+    }
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        self.run(|a| a.resumed(event_loop));
+    }
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: ()) {
+        self.run(|a| a.user_event(event_loop, event));
+    }
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        self.run(|a| a.window_event(event_loop, id, event));
+    }
+    fn device_event(&mut self, event_loop: &ActiveEventLoop, id: DeviceId, event: DeviceEvent) {
+        self.run(|a| a.device_event(event_loop, id, event));
+    }
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        self.run(|a| a.about_to_wait(event_loop));
+    }
+    fn suspended(&mut self, event_loop: &ActiveEventLoop) {
+        self.run(|a| a.suspended(event_loop));
+    }
+    fn exiting(&mut self, event_loop: &ActiveEventLoop) {
+        self.run(|a| a.exiting(event_loop));
+    }
+    fn memory_warning(&mut self, event_loop: &ActiveEventLoop) {
+        self.run(|a| a.memory_warning(event_loop));
+    }
+}
+
 /// `attributes` sized `size` (logical pixels). An iOS window always fills the screen: a size
 /// asked for there makes the window that size, larger than the screen, so the frame is cut off.
 fn window_size(
@@ -22154,7 +22204,7 @@ fn run_loading(
         error: None,
     };
     let mut app = App::Loading(Box::new(loading));
-    let result = EventLoop::new()?.run_app(&mut app);
+    let result = EventLoop::new()?.run_app(&mut BigStack(&mut app));
     narrator::stop();
     match &mut app {
         // Ready: splitscreen around P1's game.
