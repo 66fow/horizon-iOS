@@ -1484,6 +1484,7 @@ dependencies = [
  "horizon-hdr",
  "horizon-items",
  "horizon-mod-api-gen",
+ "horizon-mods",
  "horizon-narrator",
  "horizon-optifine",
  "horizon-protocol",

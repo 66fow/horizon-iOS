@@ -10,6 +10,11 @@ In a world, the Esc button (top left) is the keyboard's Escape: playing, it open
 (Save and Quit leaves the world); over an inventory, a crafting table or chat, it closes it. The F3
 button shows the debug screen. A tap away from the on-screen keyboard puts it away.
 
+**Get mods** (top right of the title screen) opens Horizon's registry (playhorizon.dev/mods): content
+mods, resource packs and shader packs install from there, each file checked as the launcher checks it
+(size, SHA-256, signature, manifest). A new mod loads the next time Horizon starts; a pack is picked in
+Options > Resource Packs. Native mods are listed as PC only.
+
 The pencil button (top right) opens the layout editor: drag any control, the stick and the hotbar
 included, to move it; tap one, then Size, Opacity or Hide; Reset puts it back (with nothing picked,
 the buttons change every control); Done keeps the layout in `touch-controls.txt` beside
@@ -55,8 +60,9 @@ the Files app or Finder/iTunes file sharing.
 
 ## What is missing
 
-- The PC launcher's pages: Microsoft sign-in (online servers), instances, the mod browser,
-  modpacks, servers and the wardrobe. Single player and LAN play without them.
+- The PC launcher's pages: Microsoft sign-in (online servers), instances, modpacks, servers and
+  the wardrobe. Single player and LAN play without them.
+- Native mods: they are Rust code the launcher compiles into the game, which an iPhone can't do.
 - An on-screen keyboard for text fields (world names, chat, server addresses).
 - The system clipboard (UIPasteboard). Copied text stays in the game for now.
 - Controllers: gilrs has no iOS backend (GameController.framework would be one).

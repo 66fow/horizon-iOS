@@ -196,6 +196,7 @@ mod mob_index;
 mod mob_looting;
 mod mob_sounds;
 mod mod_api_host;
+mod mod_browser;
 mod mods;
 mod mount_menu;
 mod mounts;
@@ -8738,6 +8739,7 @@ impl Game<'_> {
         self.draw_pad_cursor(&mut batch);
         self.draw_touch_controls(&mut batch);
         self.draw_touch_close(&mut batch);
+        self.draw_mods(&mut batch);
         batch
     }
     fn hud_layers(&mut self, size: [u32; 2]) -> HudBatch {

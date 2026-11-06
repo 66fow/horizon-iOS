@@ -30,7 +30,7 @@ const SHADE: u32 = 0x5000_0000;
 impl Game<'_> {
     /// The part of the window clear of the notch and the home bar, in GUI
     /// units at `scale`: iOS reports it as the window's inner rectangle.
-    fn touch_safe(&self, width: f32, height: f32, scale: f32) -> Area {
+    pub(super) fn touch_safe(&self, width: f32, height: f32, scale: f32) -> Area {
         let whole = Area {
             x: 0.0,
             y: 0.0,
@@ -139,6 +139,10 @@ impl Game<'_> {
     /// came down while a menu was open. A finger on the controls gives none.
     pub(super) fn touch_event(&mut self, touch: Touch) -> Vec<WindowEvent> {
         self.touch_load();
+        // The mods screen and the title screen's button for it.
+        if self.mods_touch(&touch) {
+            return Vec::new();
+        }
         let mouse = self.pad.touch_mouse.finger() == Some(touch.id);
         // The Esc button, top left in a world: Escape's job.
         if !mouse
@@ -200,6 +204,7 @@ impl Game<'_> {
     /// buttons and stick as a virtual controller, the view's drag as a turn
     /// and a tapped slot as its number key.
     pub(super) fn touch_frame(&mut self) {
+        self.mods_poll();
         if let Some(settings) = self.pad.touch.take_saved() {
             let path = touch_settings_path();
             match std::fs::write(&path, settings.to_text()) {

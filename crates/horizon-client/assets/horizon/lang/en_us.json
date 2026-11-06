@@ -831,5 +831,22 @@
   "horizon.touch.edit.hidden": "{name}: hidden",
   "horizon.touch.edit.hint": "Drag a control to move it, or tap one to change it. With none picked, the buttons change them all.",
   "horizon.touch.escape": "Esc",
-  "horizon.touch.debug": "Debug screen (F3)"
+  "horizon.touch.debug": "Debug screen (F3)",
+  "horizon.mods.get_mods": "Get mods",
+  "horizon.mods.title": "Horizon mods",
+  "horizon.mods.close": "Close",
+  "horizon.mods.tab.mods": "Mods",
+  "horizon.mods.tab.resourcepacks": "Resource packs",
+  "horizon.mods.tab.shaders": "Shader packs",
+  "horizon.mods.loading": "Loading the mod list...",
+  "horizon.mods.failed": "Couldn't load the mod list: {error}. Tap to try again.",
+  "horizon.mods.by": "by {authors} - {downloads} downloads",
+  "horizon.mods.get": "Get",
+  "horizon.mods.installed": "Installed",
+  "horizon.mods.downloading": "{percent}%",
+  "horizon.mods.retry": "Retry",
+  "horizon.mods.pc_only": "PC only",
+  "horizon.mods.unavailable": "Not for 26.3",
+  "horizon.mods.footer": "Every file is checked before it is installed. Native mods need the PC launcher.",
+  "horizon.mods.restart": "Installed: close Horizon and open it again to load it. Packs: Options > Resource Packs."
 }

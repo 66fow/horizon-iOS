@@ -44,6 +44,8 @@ pub(super) struct Pads {
     pub(super) touch_state: PadState,
     /// The touch F3 button is down (touch.rs).
     pub(super) touch_debug: bool,
+    /// The mods screen, when open (mod_browser.rs).
+    pub(super) mod_browser: Option<super::mod_browser::ModBrowser>,
     /// `touch-controls.txt` was read (touch.rs).
     pub(super) touch_loaded: bool,
     /// The finger acting as the mouse over menus.

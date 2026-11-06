@@ -16,6 +16,8 @@ horizon-client-core = { path = "../horizon-client-core" }
 horizon-client-input = { path = "../horizon-client-input" }
 horizon-command = { path = "../horizon-command" }
 horizon-core = { path = "../horizon-core" }
+# The mod registry's index, for the in-game mod browser (mod_registry.rs).
+horizon-mods = { path = "../horizon-mods", default-features = false, features = ["index"] }
 horizon-hdr = { path = "../horizon-hdr" }
 horizon-items = { path = "../horizon-items" }
 # The narrator option's status and whether the narrator is there (Options.narrator).
