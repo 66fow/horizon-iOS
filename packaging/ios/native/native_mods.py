@@ -124,6 +124,73 @@ def fetch(index: dict, out: pathlib.Path, ids: list[str], user: dict[str, dict] 
     return report
 
 
+# Mods made for an older Horizon whose hooks have since moved, as (id, version) -> [(file, old, new)]:
+# each points them at where those functions are now, until their authors update them. Only the exact
+# version listed is touched, and a fix whose old text isn't there fails the build instead of guessing.
+FIXES: dict[tuple[str, str], list[tuple[str, str, str]]] = {
+    # Streaming::forget became forget_columns (a batch of columns), and gizmos moved to the client lib.
+    ("baritone", "1.1.38"): [
+        ("horizon-mixin.toml",
+         'target = "horizon_client_render::streaming::Streaming::forget"\n'
+         'helper = "hooks/unload.rs"\n'
+         'bindings = [\n'
+         '  { name = "world", ty = "&World", value = "&*world" },\n'
+         '  { name = "x", ty = "i32", value = "x" },\n'
+         '  { name = "z", ty = "i32", value = "z" },\n'
+         ']',
+         'target = "horizon_client_render::streaming::Streaming::forget_columns"\n'
+         'helper = "hooks/unload.rs"\n'
+         'bindings = [\n'
+         '  { name = "world", ty = "&World", value = "&*world" },\n'
+         '  { name = "gone", ty = "&FxHashSet<(i32, i32)>", value = "gone" },\n'
+         ']'),
+        ("horizon-mixin.toml",
+         'target = "horizon_client::gizmos::camera_relative"',
+         'target = "horizon_client_lib::gizmos::camera_relative"'),
+        ("hooks/unload.rs",
+         'fn baritone_unload(world: &World, x: i32, z: i32) {\n'
+         '    if let Some(chunk) = world.chunks.get(&(x, z)) {\n'
+         '        baritone_unload::push(x, z, chunk.clone());\n'
+         '    }\n'
+         '}',
+         'fn baritone_unload(world: &World, gone: &FxHashSet<(i32, i32)>) {\n'
+         '    for &(x, z) in gone {\n'
+         '        if let Some(chunk) = world.chunks.get(&(x, z)) {\n'
+         '            baritone_unload::push(x, z, chunk.clone());\n'
+         '        }\n'
+         '    }\n'
+         '}'),
+    ],
+    # The server's lan module moved from horizon-client to horizon-client-lib.
+    ("shulker_peek", "0.1.0"): [
+        ("horizon-mixin.toml",
+         'target = "horizon_client::lan::hub::Hub::stack"',
+         'target = "horizon_client_lib::lan::hub::Hub::stack"'),
+    ],
+}
+
+
+def fix(out: pathlib.Path, fetched: list[dict]) -> list[str]:
+    """Applies FIXES to the mods fetch unpacked into OUT/<id>/, keeping each file's line endings."""
+    done = []
+    for mod in fetched:
+        edits = FIXES.get((mod["id"], mod["version"]))
+        if not edits:
+            continue
+        root = out / mod["id"] / "mixins" / mod["id"]
+        for name, old, new in edits:
+            path = root / name
+            raw = path.read_bytes().decode("utf-8")
+            crlf = "\r\n" in raw
+            text = raw.replace("\r\n", "\n")
+            if text.count(old) != 1:
+                raise SystemExit(f"{mod['id']} {mod['version']}: the fix for {name} no longer fits")
+            text = text.replace(old, new)
+            path.write_bytes((text.replace("\n", "\r\n") if crlf else text).encode("utf-8"))
+        done.append(f"{mod['id']} {mod['version']}")
+    return done
+
+
 def main() -> None:
     cmd, *args = sys.argv[1:]
     if cmd == "checklist":
@@ -141,7 +208,9 @@ def main() -> None:
         index = json.loads(pathlib.Path(args[0]).read_text())
         out = pathlib.Path(args[1])
         out.mkdir(parents=True, exist_ok=True)
-        print(json.dumps(fetch(index, out, args[2:], user), indent=1))
+        report = fetch(index, out, args[2:], user)
+        report["fixed"] = fix(out, report["fetched"])
+        print(json.dumps(report, indent=1))
     else:
         raise SystemExit(__doc__)
 

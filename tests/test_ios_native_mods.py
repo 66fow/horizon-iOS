@@ -38,5 +38,32 @@ class UserMods(unittest.TestCase):
         self.assertEqual(mods, {})
 
 
+class Fixes(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        self.dir = pathlib.Path(tempfile.mkdtemp())
+        self.root = self.dir / "shulker_peek" / "mixins" / "shulker_peek"
+        self.root.mkdir(parents=True)
+
+    def test_a_listed_version_is_retargeted_and_keeps_its_line_endings(self):
+        (self.root / "horizon-mixin.toml").write_bytes(
+            b'[[injection]]\r\ntarget = "horizon_client::lan::hub::Hub::stack"\r\nhelper = "send.rs"\r\n')
+        done = native_mods.fix(self.dir, [{"id": "shulker_peek", "version": "0.1.0"}])
+        self.assertEqual(done, ["shulker_peek 0.1.0"])
+        self.assertEqual((self.root / "horizon-mixin.toml").read_bytes(),
+                         b'[[injection]]\r\ntarget = "horizon_client_lib::lan::hub::Hub::stack"\r\nhelper = "send.rs"\r\n')
+
+    def test_other_versions_are_left_alone(self):
+        text = b'target = "horizon_client::lan::hub::Hub::stack"\n'
+        (self.root / "horizon-mixin.toml").write_bytes(text)
+        self.assertEqual(native_mods.fix(self.dir, [{"id": "shulker_peek", "version": "0.2.0"}]), [])
+        self.assertEqual((self.root / "horizon-mixin.toml").read_bytes(), text)
+
+    def test_a_fix_that_no_longer_fits_stops_the_build(self):
+        (self.root / "horizon-mixin.toml").write_text('target = "somewhere_else"\n')
+        with self.assertRaises(SystemExit):
+            native_mods.fix(self.dir, [{"id": "shulker_peek", "version": "0.1.0"}])
+
+
 if __name__ == "__main__":
     unittest.main()
