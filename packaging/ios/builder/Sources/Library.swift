@@ -41,8 +41,8 @@ final class Library: ObservableObject {
     @Published var error: String?
     @Published var loading = false
 
-    static var documents: URL { FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0] }
-    static var builds: URL { documents.appendingPathComponent("Builds") }
+    nonisolated static var documents: URL { FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0] }
+    nonisolated static var builds: URL { documents.appendingPathComponent("Builds") }
 
     /// The prepared game files are in Documents/resources (the Files app shows them).
     var hasGameFiles: Bool {
