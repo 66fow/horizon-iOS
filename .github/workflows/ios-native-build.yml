@@ -11,6 +11,12 @@ on:
       mods:
         description: "Native mod ids, comma-separated (blank: the ones ticked in the issue)"
         default: ""
+      instance:
+        description: "Instance number, digits (blank: a new instance). The same number updates that instance."
+        default: ""
+      name:
+        description: "The instance's name on the home screen (blank: Horizon <number>)"
+        default: ""
   issues:
     types: [edited]
 
@@ -35,6 +41,8 @@ jobs:
     outputs:
       mods: ${{ steps.pick.outputs.mods }}
       issue: ${{ steps.pick.outputs.issue }}
+      instance: ${{ steps.pick.outputs.instance }}
+      name: ${{ steps.pick.outputs.name }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -46,7 +54,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TYPED: ${{ inputs.mods }}
           ISSUE: ${{ github.event.issue.number }}
+          INSTANCE: ${{ inputs.instance }}
+          NAME: ${{ inputs.name }}
         run: |
+          # Each build is its own app (its own identifier and link) unless it updates one.
+          if ! [[ "$INSTANCE" =~ ^[0-9]{4,12}$ ]]; then
+            INSTANCE=$(python3 -c 'import secrets; print(100000 + secrets.randbelow(900000))')
+          fi
+          NAME=$(printf '%s' "$NAME" | tr -d '<>&"\\/`$' | tr -s ' ' | cut -c1-30)
+          [ -n "$NAME" ] || NAME="Horizon $INSTANCE"
+          echo "instance=$INSTANCE" >> "$GITHUB_OUTPUT"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
           if [ -z "$ISSUE" ]; then
             ISSUE=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "\"$TITLE\" in:title" \
               --json number,title --jq "map(select(.title == \"$TITLE\")) | .[0].number // empty" || true)
@@ -178,6 +196,9 @@ jobs:
           -p ${{ needs.stage.outputs.package }} --bin horizon-client ${{ needs.stage.outputs.features }}
       - name: Package
         id: package
+        env:
+          IOS_INSTANCE: ${{ needs.pick.outputs.instance }}
+          IOS_NAME: ${{ needs.pick.outputs.name }}
         run: |
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' horizon/crates/horizon-client/Cargo.toml | head -1)
           echo "version=$version" >> "$GITHUB_OUTPUT"
@@ -188,12 +209,18 @@ jobs:
           VERSION: ${{ steps.package.outputs.version }}
           MODS: ${{ needs.pick.outputs.mods }}
           ISSUE: ${{ needs.pick.outputs.issue }}
+          INSTANCE: ${{ needs.pick.outputs.instance }}
+          NAME: ${{ needs.pick.outputs.name }}
         run: |
           tag=ios-native-r$GITHUB_RUN_NUMBER
-          file="dist/Horizon-ios-$VERSION-native-r$GITHUB_RUN_NUMBER.ipa"
+          file="dist/Horizon-ios-$VERSION-native-r$GITHUB_RUN_NUMBER-i$INSTANCE.ipa"
           cp dist/Horizon.ipa "$file"
           {
             echo "Horizon for iOS with native mods: \`${MODS% }\`."
+            echo
+            echo "Instance **$NAME** ($INSTANCE): it installs as its own app, beside Horizon and other instances. Opened with \`horizon-i$INSTANCE://\`."
+            # Read by the Horizon Mods app.
+            python3 -c 'import json,os; print("<!-- horizon-instance " + json.dumps({"id": os.environ["INSTANCE"], "name": os.environ["NAME"], "mods": os.environ["MODS"].split()}) + " -->")'
             echo
             echo "Native mods change the game's own code and run with full access to the app."
             echo
@@ -202,10 +229,10 @@ jobs:
             echo '```'
           } > notes.md
           gh release create "$tag" "$file" --repo "$GITHUB_REPOSITORY" --prerelease \
-            --title "Horizon for iOS $VERSION with native mods (build $GITHUB_RUN_NUMBER)" --notes-file notes.md
+            --title "$NAME: Horizon for iOS $VERSION with native mods (build $GITHUB_RUN_NUMBER)" --notes-file notes.md
           url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/$tag/$(basename "$file")"
           if [ -n "$ISSUE" ]; then
-            gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body "🤖 Agent: ready: [$(basename "$file")]($url). Sideload it over Horizon: your worlds and files stay."
+            gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body "🤖 Agent: ready: [$(basename "$file")]($url). It installs as its own app, **$NAME**: sideload it beside Horizon."
           fi
       - name: Say what went wrong
         if: failure() && needs.pick.outputs.issue != ''
