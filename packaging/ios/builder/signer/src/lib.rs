@@ -135,10 +135,17 @@ pub fn certificate(p12: &[u8], password: &str) -> Result<(String, String, String
 pub fn prepare(program: Vec<u8>, p12: &[u8], password: &str, identifier: &str) -> Result<Vec<u8>, String> {
     let library = patch(program)?;
     let (cert, key) = parse_pfx_data(p12, password).map_err(|e| e.to_string())?;
+    let team = cert.apple_team_id();
     let mut settings = SigningSettings::default();
     settings.set_signing_key(&key, cert);
     settings.chain_apple_certificates();
-    settings.set_team_id_from_signing_certificate();
+    // apple-codesign only reads the team from certificates Apple issued; the iPhone loads a library
+    // only for the team that signed the app, so take it from the certificate's OU in any case.
+    if settings.set_team_id_from_signing_certificate().is_none() {
+        if let Some(team) = team {
+            settings.set_team_id(team);
+        }
+    }
     settings.set_binary_identifier(SettingsScope::Main, identifier);
     let signer = MachOSigner::new(&library).map_err(|e| e.to_string())?;
     let mut out = Vec::with_capacity(library.len() + 1024 * 1024);
