@@ -15,6 +15,7 @@ pub mod keybinds;
 pub mod keymapping;
 pub mod modifiers;
 pub mod mouse;
+pub mod screen_keyboard;
 pub mod snap;
 pub mod touch;
 pub mod window;

@@ -1916,6 +1916,10 @@ impl Game<'_> {
     /// Steam's on a Steam Deck (`steam://open/keyboard`, which types into
     /// the window like a real keyboard).
     fn pad_open_keyboard(&mut self) {
+        // On iOS the iPhone's own keyboard comes up for the focused field (ime.rs).
+        if cfg!(target_os = "ios") {
+            return;
+        }
         // Without xdg-open (macOS, Windows), Horizon's keyboard instead.
         if gamepad::steam_keyboard(self.settings.controller.keyboard)
             && std::process::Command::new("xdg-open")
@@ -1967,8 +1971,8 @@ impl Game<'_> {
     }
 
     /// A finger lifted over a menu (touch.rs): on a text field, the
-    /// on-screen keyboard opens, as A does there with a controller. iOS has
-    /// no other keyboard for the game yet.
+    /// on-screen keyboard opens, as A does there with a controller (on iOS
+    /// that's the iPhone's own keyboard, which the field's focus brings up).
     #[cfg_attr(not(target_os = "ios"), allow(dead_code))]
     pub(super) fn touch_tapped(&mut self) {
         if self.pad.menu.osk.is_none() && field_at(&self.pad_targets(), self.cursor) {

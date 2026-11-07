@@ -2317,6 +2317,16 @@ fn ticking_chunk(world: &World, x: i32, z: i32) -> bool {
 /// from the keysym the keymap resolved instead.
 fn follow_keymap(event: &mut WindowEvent) {
     use winit::keyboard::{Key, NamedKey};
+    // The iPhone keyboard's Return arrives as the text "\n" (winit's insertText): it's Enter.
+    #[cfg(target_os = "ios")]
+    if let WindowEvent::KeyboardInput { event, .. } = event
+        && matches!(&event.logical_key, Key::Character(c) if c == "\n" || c == "\r")
+    {
+        event.logical_key = Key::Named(NamedKey::Enter);
+        event.physical_key = PhysicalKey::Code(KeyCode::Enter);
+        event.text = None;
+        return;
+    }
     if let WindowEvent::KeyboardInput { event, .. } = event
         && let Key::Named(named) = &event.logical_key
     {

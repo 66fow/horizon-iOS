@@ -238,7 +238,22 @@ impl Game<'_> {
         let debug = frame.held.contains(&TouchButton::Debug);
         if debug != self.pad.touch_debug {
             self.pad.touch_debug = debug;
-            if let Err(e) = self.mapped_key_event(KeyCode::F3, debug, false) {
+            // KeyboardHandler.keyPress: F3 is a debug key first (its release toggles the
+            // overlay), the way the keyboard's F3 goes in window_event.
+            use horizon_client::debug_keys::KeyAction;
+            let action = if debug {
+                KeyAction::Press
+            } else {
+                KeyAction::Release
+            };
+            if debug {
+                self.physical_keys.insert(KeyCode::F3);
+            } else {
+                self.physical_keys.remove(&KeyCode::F3);
+            }
+            if !self.debug_key(KeyCode::F3, action)
+                && let Err(e) = self.mapped_key_event(KeyCode::F3, debug, false)
+            {
                 log::warn!("Horizon: touch F3: {e}");
             }
         }

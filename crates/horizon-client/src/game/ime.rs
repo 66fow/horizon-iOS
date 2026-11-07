@@ -44,6 +44,8 @@ impl Game<'_> {
 
     /// Allow the input method only while a text box has focus.
     pub(super) fn sync_ime(&mut self) {
+        // iOS: follow the iPhone keyboard's height, for the chat to sit above it.
+        horizon_client::screen_keyboard::watch();
         let want = self.text_field_focused();
         if want != self.ime_allowed
             && let Some(window) = &self.window

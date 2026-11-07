@@ -1082,7 +1082,8 @@ impl Game<'_> {
     pub(super) fn chat_scroll(&mut self, amount: f32) {
         let cursor = self.cursor;
         let height = self.renderer.as_ref().map_or(720.0, |r| {
-            HudBatch::new([r.config.width, r.config.height]).height
+            let gui = HudBatch::new([r.config.width, r.config.height]);
+            gui.height - self.chat_lift(gui.scale)
         });
         let _ = height;
         let mouse = (cursor.0.floor() as i32, cursor.1.floor() as i32);
@@ -1099,7 +1100,8 @@ impl Game<'_> {
     pub(super) fn chat_click(&mut self) {
         let cursor = self.cursor;
         let height = self.renderer.as_ref().map_or(720.0, |r| {
-            HudBatch::new([r.config.width, r.config.height]).height
+            let gui = HudBatch::new([r.config.width, r.config.height]);
+            gui.height - self.chat_lift(gui.scale)
         });
         let m = Measure(&self.gui.atlas.font);
         let c = Commands {
@@ -1333,7 +1335,21 @@ impl Game<'_> {
         // The fractional tick makes the smooth chat extra's slide move every
         // frame; vanilla's fade reads it too.
         let now = self.visual_ticks() as f32 + self.clock.fraction() as f32;
+        // Above the iPhone keyboard while typing (it would cover the bottom of the screen).
+        let lift = self.chat_lift(batch.scale);
+        batch.height -= lift;
         self.ui.chat.draw(batch, &self.gui.atlas, now, focused);
+        batch.height += lift;
+    }
+    /// GUI pixels the iPhone's keyboard covers at the bottom while the chat is open: the
+    /// chat is laid out as if the screen ended above it. 0 elsewhere.
+    pub(super) fn chat_lift(&self, scale: f32) -> f32 {
+        let points = horizon_client::screen_keyboard::height_points();
+        if self.screen != Screen::Chat || points <= 0.0 || scale <= 0.0 {
+            return 0.0;
+        }
+        let factor = self.window.as_ref().map_or(1.0, |w| w.scale_factor());
+        (points * factor) as f32 / scale
     }
     /// `HoverEvent.EntityTooltipInfo.getTooltipLines`: the name when the
     /// event has one, the entity type and the UUID.
@@ -1371,6 +1387,13 @@ impl Game<'_> {
         Some(horizon_protocol::crypto::uuid_string(bits))
     }
     pub(super) fn draw_chat_screen(&mut self, batch: &mut HudBatch) {
+        let lift = self.chat_lift(batch.scale);
+        batch.height -= lift;
+        self.draw_chat_screen_above(batch);
+        batch.height += lift;
+    }
+    /// The chat screen in `batch`'s height (less the keyboard's, see `chat_lift`).
+    fn draw_chat_screen_above(&mut self, batch: &mut HudBatch) {
         let Some(mut screen) = self.ui.chat_screen.take() else {
             return;
         };
