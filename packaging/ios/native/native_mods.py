@@ -128,7 +128,8 @@ def fetch(index: dict, out: pathlib.Path, ids: list[str], user: dict[str, dict] 
 # each points them at where those functions are now, until their authors update them. Only the exact
 # version listed is touched, and a fix whose old text isn't there fails the build instead of guessing.
 FIXES: dict[tuple[str, str], list[tuple[str, str, str]]] = {
-    # Streaming::forget became forget_columns (a batch of columns), and gizmos moved to the client lib.
+    # Streaming::forget became forget_columns (a batch of columns), gizmos moved to the client lib,
+    # and the chat's show_suggestions takes whether Tab asked.
     ("baritone", "1.1.38"): [
         ("horizon-mixin.toml",
          'target = "horizon_client_render::streaming::Streaming::forget"\n'
@@ -147,6 +148,10 @@ FIXES: dict[tuple[str, str], list[tuple[str, str, str]]] = {
         ("horizon-mixin.toml",
          'target = "horizon_client::gizmos::camera_relative"',
          'target = "horizon_client_lib::gizmos::camera_relative"'),
+        # show_suggestions took `immediate` (Tab asked for them): false as Horizon passes while typing.
+        ("hooks/suggest_hook.rs",
+         "        screen.show_suggestions(m);",
+         "        screen.show_suggestions(m, false);"),
         ("hooks/unload.rs",
          'fn baritone_unload(world: &World, x: i32, z: i32) {\n'
          '    if let Some(chunk) = world.chunks.get(&(x, z)) {\n'
