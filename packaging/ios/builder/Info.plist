@@ -75,6 +75,12 @@
 		<string>BricolageGrotesqueHeading-SemiBold.ttf</string>
 		<string>BricolageGrotesqueDisplay-SemiBold.ttf</string>
 	</array>
+	<!-- Files shows Documents (On My iPhone > Horizon Mods): the game files every build shares
+	     (resources/), the builds (Builds/), worlds, mods and packs. -->
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 	<key>UIUserInterfaceStyle</key>
 	<string>Dark</string>
 	<key>NSHumanReadableCopyright</key>

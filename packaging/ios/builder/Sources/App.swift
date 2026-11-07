@@ -4,12 +4,14 @@ import SwiftUI
 struct HorizonModsApp: App {
     @StateObject private var store = Store()
     @StateObject private var maker = Maker()
+    @StateObject private var library = Library()
 
     var body: some Scene {
         WindowGroup {
             RootView()
                 .environmentObject(store)
                 .environmentObject(maker)
+                .environmentObject(library)
                 .tint(Theme.accentSoft)
                 .preferredColorScheme(.dark)
         }
@@ -29,7 +31,7 @@ struct RootView: View {
                 case .mods: ModsView()
                 case .create: CreateView()
                 case .builds: BuildsView()
-                case .instances: InstancesView()
+                case .instances: PlayView()
                 case .settings: SettingsView()
                 }
             }
