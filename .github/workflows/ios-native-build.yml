@@ -162,6 +162,7 @@ jobs:
         working-directory: ws
         env:
           IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+          HORIZON_IOS_REPO: ${{ github.repository }}
         run: >-
           cargo build --profile fast --locked --target aarch64-apple-ios
           -p ${{ needs.stage.outputs.package }} --bin horizon-client ${{ needs.stage.outputs.features }}

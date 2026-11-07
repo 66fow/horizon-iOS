@@ -24,3 +24,8 @@ controllers = ["dep:horizon-dualsense"]
 
 [lints]
 workspace = true
+
+[target.'cfg(target_os = "ios")'.dependencies]
+# The system clipboard: UIKit's pasteboard (clipboard.rs).
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString"] }

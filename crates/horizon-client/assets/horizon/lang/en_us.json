@@ -848,5 +848,19 @@
   "horizon.mods.pc_only": "PC only",
   "horizon.mods.unavailable": "Not for 26.3",
   "horizon.mods.footer": "Every file is checked before it is installed. Native mods need the PC launcher.",
-  "horizon.mods.restart": "Installed: close Horizon and open it again to load it. Packs: Options > Resource Packs."
+  "horizon.mods.restart": "Installed: close Horizon and open it again to load it. Packs: Options > Resource Packs.",
+  "horizon.mods.tab.native": "Native",
+  "horizon.mods.native.paste": "Paste token",
+  "horizon.mods.native.build": "Build ({count})",
+  "horizon.mods.native.retry": "Try again",
+  "horizon.mods.native.tick": "Tick",
+  "horizon.mods.native.ticked": "Ticked",
+  "horizon.mods.native.how": "Copy a GitHub token for this fork (Issues: read and write), then tap Paste token.",
+  "horizon.mods.native.copy_token": "Copy a GitHub token first (github_pat_... or ghp_...), then tap Paste token.",
+  "horizon.mods.native.loading": "Reading the Native mods for iOS issue...",
+  "horizon.mods.native.trust": "Native mods run with full access to the app. Tick some, then Build.",
+  "horizon.mods.native.tick_some": "Tick at least one mod first.",
+  "horizon.mods.native.starting": "Starting the build on GitHub...",
+  "horizon.mods.native.started": "Build started on GitHub: the .ipa link comes in the issue in about 30-45 minutes.",
+  "horizon.mods.native.no_repo": "This build can't start native builds: it wasn't built on GitHub."
 }

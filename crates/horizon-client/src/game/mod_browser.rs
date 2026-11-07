@@ -1,13 +1,16 @@
 //! The mods screen of the iOS build (which has no launcher): a "Get mods"
 //! button on the title screen opens Horizon's registry (playhorizon.dev/mods)
-//! over it, in tabs for mods, resource packs and shader packs. A tap on Get
-//! downloads, checks and installs the file (`horizon_client::mod_registry`);
-//! native mods are listed as PC only. New mods load the next time Horizon
-//! starts. Touch only: it lives beside the touch controls (touch.rs).
+//! over it, in tabs for mods, native mods, resource packs and shader packs. A
+//! tap on Get downloads, checks and installs the file
+//! (`horizon_client::mod_registry`). New mods load the next time Horizon
+//! starts. Native mods are ticked in the fork's "Native mods for iOS" issue
+//! (a GitHub token pasted once), and Build has GitHub compile an `.ipa` with
+//! them (packaging/ios/native-mods.md). Touch only: it lives beside the touch
+//! controls (touch.rs).
 use super::*;
 use horizon_client::mod_registry::{self, Message, Offer, Registry, Tab};
 use horizon_client_input::touch::Area;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use winit::event::{Touch, TouchPhase};
 
@@ -43,6 +46,44 @@ pub(super) struct ModBrowser {
     drag: Option<(u64, f32, f32)>,
     /// Something was installed: say Horizon must restart.
     restart: bool,
+    native: Native,
+}
+
+/// The Native tab's link to the checklist issue.
+#[derive(Default)]
+struct Native {
+    token: Option<String>,
+    /// The issue's number and body.
+    issue: Option<(u64, String)>,
+    ticks: BTreeSet<String>,
+    /// What to say over the list, and in which colour.
+    status: Option<(String, u32)>,
+    /// A request to GitHub is out.
+    busy: bool,
+}
+
+/// Where the GitHub token is kept: the app's Library, not Documents (which the
+/// Files app shows).
+fn token_path() -> std::path::PathBuf {
+    std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(horizon_client::logging::player_dir)
+        .join("Library")
+        .join("horizon-github-token")
+}
+
+fn load_token() -> Option<String> {
+    let token = std::fs::read_to_string(token_path()).ok()?;
+    let token = token.trim();
+    (!token.is_empty()).then(|| token.to_owned())
+}
+
+/// A GitHub token: a fine-grained (`github_pat_`) or classic (`ghp_`) one.
+fn plausible_token(text: &str) -> bool {
+    let t = text.trim();
+    (t.starts_with("github_pat_") || t.starts_with("ghp_"))
+        && t.len() >= 30
+        && t.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 impl ModBrowser {
@@ -57,7 +98,101 @@ impl ModBrowser {
             jobs: HashMap::new(),
             drag: None,
             restart: false,
+            native: Native {
+                token: load_token(),
+                ..Native::default()
+            },
         }
+    }
+
+    /// The Native tab needs the issue: ask GitHub for it, once.
+    fn want_issue(&mut self) {
+        let n = &mut self.native;
+        if self.tab != Tab::Native || n.issue.is_some() || n.busy {
+            return;
+        }
+        let (Some(repo), Some(token)) = (mod_registry::IOS_REPO, n.token.clone()) else {
+            return;
+        };
+        if n.status.as_ref().is_some_and(|(_, c)| *c == BAD) {
+            return;
+        }
+        n.busy = true;
+        n.status = Some((
+            horizon_client::lang::get("horizon.mods.native.loading"),
+            DIM,
+        ));
+        self.registry.load_issue(repo.to_owned(), token);
+    }
+
+    /// The Native tab's bar button: paste the token, or build the ticked mods.
+    fn native_action(&mut self, clipboard: String) {
+        let n = &mut self.native;
+        if n.busy {
+            return;
+        }
+        let get = horizon_client::lang::get;
+        let Some(repo) = mod_registry::IOS_REPO else {
+            n.status = Some((get("horizon.mods.native.no_repo"), BAD));
+            return;
+        };
+        if n.token.is_none() {
+            if !plausible_token(&clipboard) {
+                n.status = Some((get("horizon.mods.native.copy_token"), BAD));
+                return;
+            }
+            let token = clipboard.trim().to_owned();
+            let path = token_path();
+            if let Some(dir) = path.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            if let Err(e) = std::fs::write(&path, &token) {
+                log::warn!("Horizon: keeping the GitHub token: {e}");
+            }
+            n.token = Some(token);
+            n.status = None;
+            self.want_issue();
+            return;
+        }
+        let (Some((number, body)), Some(token)) = (n.issue.clone(), n.token.clone()) else {
+            n.status = None;
+            self.want_issue();
+            return;
+        };
+        if n.ticks.is_empty() {
+            n.status = Some((get("horizon.mods.native.tick_some"), BAD));
+            return;
+        }
+        let body = mod_registry::with_ticks(&body, &n.ticks, true);
+        n.issue = Some((number, mod_registry::with_ticks(&body, &n.ticks, false)));
+        n.busy = true;
+        n.status = Some((get("horizon.mods.native.starting"), DIM));
+        log::info!("Horizon: native build of {:?}", n.ticks);
+        self.registry
+            .save_issue(repo.to_owned(), token, number, body);
+    }
+}
+
+/// The rows' area: the list, under the Native tab's bar there.
+fn rows(f: &Frame, tab: Tab) -> Area {
+    if tab == Tab::Native {
+        Area {
+            y: f.list.y + BAR + GAP,
+            h: (f.list.h - BAR - GAP).max(ROW),
+            ..f.list
+        }
+    } else {
+        f.list
+    }
+}
+
+/// The Native tab's button, at the start of its bar.
+fn native_button(f: &Frame) -> Area {
+    Area {
+        x: f.list.x,
+        y: f.list.y,
+        w: 96.0,
+        h: BAR,
     }
 }
 
@@ -84,7 +219,7 @@ fn frame(safe: Area) -> Frame {
         h: BAR,
     };
     let tab_y = panel.y + GAP + BAR + GAP;
-    let tab_w = 92.0;
+    let tab_w = 80.0;
     let tabs = Tab::ALL
         .iter()
         .enumerate()
@@ -170,9 +305,28 @@ impl Game<'_> {
         }
         let f = frame(self.mods_safe(&batch));
         let game_dir = horizon_client::logging::player_dir();
+        // The Native tab's button may paste the token: read the clipboard first.
+        let on_native_button = touch.phase == TouchPhase::Started
+            && self
+                .pad
+                .mod_browser
+                .as_ref()
+                .is_some_and(|b| b.tab == Tab::Native)
+            && native_button(&f).contains(at);
+        let pasted = if on_native_button {
+            use horizon_client::clipboard::Clipboard;
+            self.clipboard.get()
+        } else {
+            String::new()
+        };
         let Some(browser) = self.pad.mod_browser.as_mut() else {
             return false;
         };
+        if on_native_button {
+            browser.native_action(pasted);
+            return true;
+        }
+        let list = rows(&f, browser.tab);
         match touch.phase {
             TouchPhase::Started => {
                 if f.close.contains(at) {
@@ -182,14 +336,15 @@ impl Game<'_> {
                 if let Some((tab, _)) = f.tabs.iter().find(|(_, a)| a.contains(at)) {
                     browser.tab = *tab;
                     browser.scroll = 0.0;
+                    browser.want_issue();
                     return true;
                 }
-                if matches!(browser.index, Some(Err(_))) && f.list.contains(at) {
+                if matches!(browser.index, Some(Err(_))) && list.contains(at) {
                     browser.index = None;
                     browser.registry.fetch_index();
                     return true;
                 }
-                if f.list.contains(at) {
+                if list.contains(at) {
                     browser.drag = Some((touch.id, at.1, 0.0));
                 }
             }
@@ -205,7 +360,7 @@ impl Game<'_> {
                     Some(Ok(index)) => mod_registry::entries(index, browser.tab).len(),
                     _ => 0,
                 };
-                let max = (rows as f32 * ROW - f.list.h).max(0.0);
+                let max = (rows as f32 * ROW - list.h).max(0.0);
                 browser.scroll = browser.scroll.clamp(0.0, max);
             }
             TouchPhase::Ended | TouchPhase::Cancelled => {
@@ -220,15 +375,30 @@ impl Game<'_> {
                     return true;
                 };
                 let entries = mod_registry::entries(&index, browser.tab);
-                let row = ((at.1 - f.list.y + browser.scroll) / ROW).floor();
+                let row = ((at.1 - list.y + browser.scroll) / ROW).floor();
                 if row < 0.0 {
                     return true;
                 }
                 let Some(project) = entries.get(row as usize) else {
                     return true;
                 };
-                let row_y = f.list.y + row * ROW - browser.scroll;
-                if !button(f.list, row_y).contains(at) {
+                let row_y = list.y + row * ROW - browser.scroll;
+                if browser.tab == Tab::Native {
+                    // A tap anywhere on a native mod's row ticks or unticks it.
+                    let n = &mut browser.native;
+                    if n.issue.is_some() && !n.busy {
+                        if !n.ticks.remove(&project.id) {
+                            n.ticks.insert(project.id.clone());
+                        }
+                    } else if n.token.is_none() {
+                        n.status = Some((
+                            horizon_client::lang::get("horizon.mods.native.copy_token"),
+                            DIM,
+                        ));
+                    }
+                    return true;
+                }
+                if !button(list, row_y).contains(at) {
                     return true;
                 }
                 let busy = matches!(browser.jobs.get(&project.id), Some(Job::Downloading(_)));
@@ -275,8 +445,43 @@ impl Game<'_> {
                     log::warn!("Horizon: installing {id}: {error}");
                     browser.jobs.insert(id, Job::Failed(error));
                 }
+                Message::Issue(result) => {
+                    let n = &mut browser.native;
+                    n.busy = false;
+                    match result {
+                        Ok((number, body)) => {
+                            n.ticks = mod_registry::ticked(&body);
+                            n.issue = Some((number, body));
+                            n.status = None;
+                        }
+                        Err(e) => {
+                            log::warn!("Horizon: the native mods issue: {e}");
+                            if e.contains("401") {
+                                // A bad token: forget it, so the button pastes a new one.
+                                n.token = None;
+                                let _ = std::fs::remove_file(token_path());
+                            }
+                            n.status = Some((e, BAD));
+                        }
+                    }
+                }
+                Message::IssueSaved(result) => {
+                    let n = &mut browser.native;
+                    n.busy = false;
+                    n.status = Some(match result {
+                        Ok(()) => (
+                            horizon_client::lang::get("horizon.mods.native.started"),
+                            DIM,
+                        ),
+                        Err(e) => {
+                            log::warn!("Horizon: starting the native build: {e}");
+                            (e, BAD)
+                        }
+                    });
+                }
             }
         }
+        browser.want_issue();
     }
 
     /// The title screen's button, or the mods screen over everything.
@@ -345,6 +550,38 @@ impl Game<'_> {
             let text = fit(atlas, &text, list.w - GAP * 2.0);
             batch.text(atlas, &text, list.x + GAP, list.y + GAP, colour, true);
         }
+        let list = if browser.tab == Tab::Native
+            && browser.index.as_ref().is_some_and(|i| i.is_ok())
+        {
+            let n = &browser.native;
+            let get = horizon_client::lang::get;
+            let b = native_button(&f);
+            let (label, face) = match (&n.token, &n.issue) {
+                (None, _) => (get("horizon.mods.native.paste"), BUTTON),
+                (Some(_), Some(_)) => (
+                    get("horizon.mods.native.build").replace("{count}", &n.ticks.len().to_string()),
+                    if n.ticks.is_empty() || n.busy {
+                        BUTTON_OFF
+                    } else {
+                        BUTTON
+                    },
+                ),
+                (Some(_), None) => (get("horizon.mods.native.retry"), BUTTON_OFF),
+            };
+            batch.fill(atlas, b.x, b.y, b.w, b.h, face);
+            centred(batch, atlas, &label, b, INK);
+            let (text, colour) = match &n.status {
+                Some((text, colour)) => (text.clone(), *colour),
+                None if n.token.is_none() => (get("horizon.mods.native.how"), DIM),
+                None => (get("horizon.mods.native.trust"), DIM),
+            };
+            let x = b.x + b.w + GAP * 2.0;
+            let text = fit(atlas, &text, list.x + list.w - x - GAP);
+            batch.text(atlas, &text, x, b.y + (BAR - 8.0) / 2.0, colour, false);
+            rows(&f, Tab::Native)
+        } else {
+            list
+        };
         if let Some(Ok(index)) = &browser.index {
             let game_dir = horizon_client::logging::player_dir();
             let entries = mod_registry::entries(index, browser.tab);
@@ -370,32 +607,45 @@ impl Game<'_> {
                 let summary = fit(atlas, &project.summary, text_w);
                 batch.text(atlas, &summary, list.x + GAP, y + 23.0, DIM, false);
                 let b = button(list, y);
-                let (label, face) = match browser.jobs.get(&project.id) {
-                    Some(Job::Downloading(k)) => (
-                        horizon_client::lang::get("horizon.mods.downloading")
-                            .replace("{percent}", &format!("{:.0}", k * 100.0)),
-                        BUTTON_OFF,
-                    ),
-                    Some(Job::Done) => (
-                        horizon_client::lang::get("horizon.mods.installed"),
-                        BUTTON_OFF,
-                    ),
-                    Some(Job::Failed(_)) => (horizon_client::lang::get("horizon.mods.retry"), BAD),
-                    None => match mod_registry::offer(index, project, &game_dir) {
-                        Offer::Get(_) => (horizon_client::lang::get("horizon.mods.get"), BUTTON),
-                        Offer::Installed => (
+                let (label, face) = if browser.tab == Tab::Native {
+                    let get = horizon_client::lang::get;
+                    if browser.native.ticks.contains(&project.id) {
+                        (get("horizon.mods.native.ticked"), BUTTON)
+                    } else {
+                        (get("horizon.mods.native.tick"), BUTTON_OFF)
+                    }
+                } else {
+                    match browser.jobs.get(&project.id) {
+                        Some(Job::Downloading(k)) => (
+                            horizon_client::lang::get("horizon.mods.downloading")
+                                .replace("{percent}", &format!("{:.0}", k * 100.0)),
+                            BUTTON_OFF,
+                        ),
+                        Some(Job::Done) => (
                             horizon_client::lang::get("horizon.mods.installed"),
                             BUTTON_OFF,
                         ),
-                        Offer::PcOnly => (
-                            horizon_client::lang::get("horizon.mods.pc_only"),
-                            BUTTON_OFF,
-                        ),
-                        Offer::Unavailable => (
-                            horizon_client::lang::get("horizon.mods.unavailable"),
-                            BUTTON_OFF,
-                        ),
-                    },
+                        Some(Job::Failed(_)) => {
+                            (horizon_client::lang::get("horizon.mods.retry"), BAD)
+                        }
+                        None => match mod_registry::offer(index, project, &game_dir) {
+                            Offer::Get(_) => {
+                                (horizon_client::lang::get("horizon.mods.get"), BUTTON)
+                            }
+                            Offer::Installed => (
+                                horizon_client::lang::get("horizon.mods.installed"),
+                                BUTTON_OFF,
+                            ),
+                            Offer::PcOnly => (
+                                horizon_client::lang::get("horizon.mods.pc_only"),
+                                BUTTON_OFF,
+                            ),
+                            Offer::Unavailable => (
+                                horizon_client::lang::get("horizon.mods.unavailable"),
+                                BUTTON_OFF,
+                            ),
+                        },
+                    }
                 };
                 batch.fill(atlas, b.x, b.y, b.w, b.h, face);
                 centred(batch, atlas, &label, b, INK);

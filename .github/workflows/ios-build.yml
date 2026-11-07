@@ -36,6 +36,8 @@ jobs:
       - name: Build
         env:
           IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+          # The fork whose "Native mods for iOS" issue the app's Native tab ticks.
+          HORIZON_IOS_REPO: ${{ github.repository }}
         run: cargo build --profile fast --locked --target aarch64-apple-ios -p horizon-client --bin horizon-client
       - name: Package
         id: package

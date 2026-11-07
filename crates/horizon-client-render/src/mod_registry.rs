@@ -2,8 +2,9 @@
 //! game, for the iOS build, which has no launcher. It reads the registry's
 //! `index.json` (docs/api/mod-index.md) and installs what is only files:
 //! content mods (`.hmod`), resource packs and shader packs. Native mods are
-//! Rust code a launcher compiles into the game; an iPhone can't, so they are
-//! listed as PC only.
+//! Rust code compiled into the game, which an iPhone can't do: the Native tab
+//! ticks them in the fork's "Native mods for iOS" issue, and ticking Build now
+//! there has GitHub build an `.ipa` with them (packaging/ios/native-mods.md).
 //!
 //! The index and each download run on a worker thread and report over a
 //! channel; the screen only polls. A file is checked against its entry
@@ -34,17 +35,19 @@ const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tab {
     Mods,
+    Native,
     ResourcePacks,
     Shaders,
 }
 
 impl Tab {
-    pub const ALL: [Tab; 3] = [Tab::Mods, Tab::ResourcePacks, Tab::Shaders];
+    pub const ALL: [Tab; 4] = [Tab::Mods, Tab::Native, Tab::ResourcePacks, Tab::Shaders];
 
     /// The translation key of its name.
     pub fn label(self) -> &'static str {
         match self {
             Tab::Mods => "horizon.mods.tab.mods",
+            Tab::Native => "horizon.mods.tab.native",
             Tab::ResourcePacks => "horizon.mods.tab.resourcepacks",
             Tab::Shaders => "horizon.mods.tab.shaders",
         }
@@ -52,7 +55,8 @@ impl Tab {
 
     fn holds(self, kind: &Kind) -> bool {
         match self {
-            Tab::Mods => matches!(kind, Kind::Mod | Kind::NativeMod),
+            Tab::Mods => *kind == Kind::Mod,
+            Tab::Native => *kind == Kind::NativeMod,
             Tab::ResourcePacks => *kind == Kind::ResourcePack,
             Tab::Shaders => matches!(kind, Kind::Shader | Kind::ShaderPack),
         }
@@ -120,9 +124,64 @@ pub fn offer<'a>(index: &'a Index, project: &'a Project, game_dir: &Path) -> Off
     }
 }
 
+/// The fork the app was built from (`owner/name`), which builds its native
+/// mods: set by the iOS workflows (`HORIZON_IOS_REPO`).
+pub const IOS_REPO: Option<&str> = option_env!("HORIZON_IOS_REPO");
+/// The issue whose checklist picks the native mods (ios-native-list.yml).
+pub const ISSUE_TITLE: &str = "Native mods for iOS";
+/// The checklist's line that starts a build.
+const BUILD_LINE: &str = "- [ ] **Build now**";
+
+/// The native mod ids ticked in the issue's `body`.
+pub fn ticked(body: &str) -> std::collections::BTreeSet<String> {
+    body.lines()
+        .filter_map(|line| {
+            let rest = line.trim().strip_prefix("- [")?;
+            let (mark, rest) = rest.split_at_checked(1)?;
+            let id = rest.strip_prefix("] `")?.split('`').next()?;
+            matches!(mark, "x" | "X").then(|| id.to_owned())
+        })
+        .collect()
+}
+
+/// `body` with exactly `ticks` ticked, and Build now ticked when `build`.
+pub fn with_ticks(body: &str, ticks: &std::collections::BTreeSet<String>, build: bool) -> String {
+    let mut out = String::with_capacity(body.len());
+    for line in body.lines() {
+        let trimmed = line.trim();
+        let new = if trimmed.eq_ignore_ascii_case(BUILD_LINE)
+            || trimmed.eq_ignore_ascii_case("- [x] **Build now**")
+        {
+            if build {
+                "- [x] **Build now**"
+            } else {
+                BUILD_LINE
+            }
+            .to_owned()
+        } else if let Some(rest) = trimmed
+            .strip_prefix("- [ ] `")
+            .or_else(|| trimmed.strip_prefix("- [x] `"))
+            .or_else(|| trimmed.strip_prefix("- [X] `"))
+        {
+            let id = rest.split('`').next().unwrap_or_default();
+            let mark = if ticks.contains(id) { 'x' } else { ' ' };
+            format!("- [{mark}] `{rest}")
+        } else {
+            line.to_owned()
+        };
+        out.push_str(&new);
+        out.push('\n');
+    }
+    out
+}
+
 /// What the worker reports.
 #[derive(Debug)]
 pub enum Message {
+    /// The checklist issue: its number and body.
+    Issue(Result<(u64, String), String>),
+    /// The checklist was saved (with Build now ticked: a build started).
+    IssueSaved(Result<(), String>),
     Index(Result<Index, String>),
     /// Bytes of `id`'s file read so far, of `total`.
     Progress {
@@ -191,6 +250,35 @@ impl Registry {
             .ok();
     }
 
+    /// Read the checklist issue of `repo` with `token`.
+    pub fn load_issue(&self, repo: String, token: String) {
+        let tx = self.tx.clone();
+        std::thread::Builder::new()
+            .name("native mods issue".into())
+            .spawn(move || {
+                let _ = tx.send(Message::Issue(find_issue(&repo, &token)));
+            })
+            .ok();
+    }
+
+    /// Write the checklist issue's `body`.
+    pub fn save_issue(&self, repo: String, token: String, number: u64, body: String) {
+        let tx = self.tx.clone();
+        std::thread::Builder::new()
+            .name("native mods issue".into())
+            .spawn(move || {
+                let url = format!("https://api.github.com/repos/{repo}/issues/{number}");
+                let payload = serde_json::json!({ "body": body }).to_string();
+                let result = github(ureq::patch(&url), &token)
+                    .set("Content-Type", "application/json")
+                    .send_string(&payload)
+                    .map(|_| ())
+                    .map_err(github_error);
+                let _ = tx.send(Message::IssueSaved(result));
+            })
+            .ok();
+    }
+
     /// What arrived since the last poll.
     pub fn poll(&self) -> Vec<Message> {
         self.rx.try_iter().collect()
@@ -250,6 +338,48 @@ fn install(
         dir.display()
     );
     Ok(version.file.name.clone())
+}
+
+fn github(request: ureq::Request, token: &str) -> ureq::Request {
+    request
+        .set("User-Agent", AGENT)
+        .set("Accept", "application/vnd.github+json")
+        .set("Authorization", &format!("Bearer {token}"))
+}
+
+fn github_error(e: ureq::Error) -> String {
+    match e {
+        ureq::Error::Status(401, _) => "GitHub refused the token (401): paste a new one".into(),
+        ureq::Error::Status(403, _) | ureq::Error::Status(404, _) => {
+            "the token can't reach the repository's issues: give it Issues read and write".into()
+        }
+        e => e.to_string(),
+    }
+}
+
+/// The open checklist issue of `repo`.
+fn find_issue(repo: &str, token: &str) -> Result<(u64, String), String> {
+    let url = format!("https://api.github.com/repos/{repo}/issues?state=open&per_page=100");
+    let text = github(ureq::get(&url), token)
+        .call()
+        .map_err(github_error)?
+        .into_string()
+        .map_err(|e| e.to_string())?;
+    let issues: Vec<serde_json::Value> = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    issues
+        .iter()
+        .find(|i| i["title"] == ISSUE_TITLE && i.get("pull_request").is_none())
+        .and_then(|i| {
+            Some((
+                i["number"].as_u64()?,
+                i["body"].as_str().unwrap_or("").to_owned(),
+            ))
+        })
+        .ok_or_else(|| {
+            format!(
+                "no \"{ISSUE_TITLE}\" issue: run Actions > Native mods for iOS (checklist) once"
+            )
+        })
 }
 
 /// A file name with no path in it.
@@ -323,7 +453,8 @@ mod tests {
                 .map(|p| p.id.clone())
                 .collect::<Vec<_>>()
         };
-        assert_eq!(ids(Tab::Mods), ["popular", "fast", "coords"]);
+        assert_eq!(ids(Tab::Mods), ["popular", "coords"]);
+        assert_eq!(ids(Tab::Native), ["fast"]);
         assert_eq!(ids(Tab::ResourcePacks), ["faithful"]);
         assert_eq!(ids(Tab::Shaders), ["glow"]);
     }
@@ -355,5 +486,19 @@ mod tests {
         for bad in ["", "../x.zip", "a/b.zip", ".hidden", "..", "a\\b"] {
             assert!(!safe_name(bad), "{bad:?}");
         }
+    }
+
+    #[test]
+    fn the_checklist_keeps_its_text_and_takes_the_ticks() {
+        let body = "Intro\n\n- [ ] **Build now**\n\n- [x] `zoom` Zoom: a\n- [ ] `minimap` Minimap: b `code`\n";
+        assert_eq!(ticked(body).into_iter().collect::<Vec<_>>(), ["zoom"]);
+        let ticks = ["minimap".to_owned()].into_iter().collect();
+        let built = with_ticks(body, &ticks, true);
+        assert_eq!(
+            built,
+            "Intro\n\n- [x] **Build now**\n\n- [ ] `zoom` Zoom: a\n- [x] `minimap` Minimap: b `code`\n"
+        );
+        assert_eq!(ticked(&built).into_iter().collect::<Vec<_>>(), ["minimap"]);
+        assert!(with_ticks(&built, &ticks, false).contains("- [ ] **Build now**"));
     }
 }
