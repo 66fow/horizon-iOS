@@ -166,6 +166,12 @@ FIXES: dict[tuple[str, str], list[tuple[str, str, str]]] = {
          '    }\n'
          '}'),
     ],
+    # The title screen's buttons have a controller `action` now: none for the Mods button.
+    ("mod_menu", "0.3.3"): [
+        ("title_buttons.rs",
+         "                icon: None,\n                trailing: None,\n            });",
+         "                icon: None,\n                trailing: None,\n                action: None,\n            });"),
+    ],
     # The server's lan module moved from horizon-client to horizon-client-lib.
     ("shulker_peek", "0.1.0"): [
         ("horizon-mixin.toml",
