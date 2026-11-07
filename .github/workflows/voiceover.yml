@@ -1,0 +1,54 @@
+# Speaks video narration with Kokoro (an open-source text-to-speech model, Apache-2.0) and prints
+# each line as Ogg Opus, base64, between VOICE-BEGIN <id> and VOICE-END in the log (for videos
+# about Horizon made elsewhere). Input: {"<video>": {"voice": "am_michael", "speed": 1.0,
+# "lines": ["…", …]}, …}.
+name: Voiceover
+
+on:
+  workflow_dispatch:
+    inputs:
+      script:
+        description: "The narration, as JSON"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  speak:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Kokoro
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q espeak-ng ffmpeg
+          pip install -q torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -q "kokoro>=0.9" soundfile
+      - name: Speak
+        env:
+          SCRIPT: ${{ inputs.script }}
+        run: |
+          mkdir out
+          python3 - <<'PY'
+          import json, os, numpy as np, soundfile as sf
+          from kokoro import KPipeline
+          script = json.loads(os.environ["SCRIPT"])
+          pipes = {}
+          for video, spec in script.items():
+              voice = spec["voice"]
+              lang = voice[0]
+              pipe = pipes.setdefault(lang, KPipeline(lang_code=lang))
+              for i, line in enumerate(spec["lines"], start=1):
+                  parts = [a for _, _, a in pipe(line, voice=voice, speed=spec.get("speed", 1.0))]
+                  audio = np.concatenate([np.asarray(p) for p in parts])
+                  sf.write(f"out/{video}-{i:02}.wav", audio, 24000)
+                  print(video, i, round(len(audio) / 24000, 2))
+          PY
+          for f in out/*.wav; do ffmpeg -v error -i "$f" -c:a libopus -b:a 64k "${f%.wav}.ogg"; done
+      - name: Print them
+        run: |
+          for f in out/*.ogg; do
+            echo "VOICE-BEGIN $(basename "${f%.ogg}")"
+            base64 -w 1000 "$f"
+            echo "VOICE-END"
+          done
