@@ -27,6 +27,8 @@ struct LocalBuild: Codable, Identifiable, Equatable {
     /// The .app folder's name inside the build's folder.
     let app: String
     var bytes: Int64
+    /// The certificate (its fingerprint) the build's library was signed with, for playing.
+    var signedWith: String?
 
     var id: String { folder }
 }
@@ -101,7 +103,7 @@ final class Library: ObservableObject {
                 try Unzip.app(from: file, into: staging)
             }.value
             let meta = LocalBuild(tag: build.tag, folder: build.folder, title: build.title, date: build.date,
-                                  mods: build.mods, app: app, bytes: bytes)
+                                  mods: build.mods, app: app, bytes: bytes, signedWith: nil)
             let encoder = JSONEncoder()
             encoder.dateEncodingStrategy = .iso8601
             encoder.outputFormatting = .prettyPrinted
@@ -112,6 +114,16 @@ final class Library: ObservableObject {
         } catch {
             self.error = "\(build.title): \(error.localizedDescription)"
         }
+    }
+
+    func markSigned(_ build: LocalBuild, with fingerprint: String) {
+        var next = build
+        next.signedWith = fingerprint
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = .prettyPrinted
+        try? encoder.encode(next).write(to: Self.builds.appendingPathComponent(build.folder).appendingPathComponent("build.json"))
+        scan()
     }
 
     func delete(_ build: LocalBuild) {

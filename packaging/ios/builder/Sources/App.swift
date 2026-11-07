@@ -1,6 +1,14 @@
 import SwiftUI
 
+/// Horizon Mods starts here: a build waiting to be played runs before any of Horizon Mods' screens.
 @main
+enum Entry {
+    static func main() {
+        Launcher.runPendingLaunch()
+        HorizonModsApp.main()
+    }
+}
+
 struct HorizonModsApp: App {
     @StateObject private var store = Store()
     @StateObject private var maker = Maker()
@@ -41,6 +49,14 @@ struct RootView: View {
         }
         .task { await store.loadMods() }
         .task { await Demo.start(store) }
+        .onOpenURL { url in
+            // SideStore's or AltStore's answer to "From SideStore/AltStore" in Settings.
+            if let cert = Certificate.from(url) {
+                Certificate.save(cert)
+                NotificationCenter.default.post(name: .certificateImported, object: nil)
+                store.tab = .settings
+            }
+        }
         // Builds are checked while the app is open: often while one runs, rarely otherwise.
         .task(id: phase) {
             guard phase == .active else { return }

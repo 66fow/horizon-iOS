@@ -35,6 +35,18 @@
 			</array>
 		</dict>
 	</dict>
+	<!-- SideStore and AltStore send the signing certificate to horizonmods://certificate. -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>dev.horizon.mods</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>horizonmods</string>
+			</array>
+		</dict>
+	</array>
 	<key>HorizonRepo</key>
 	<string>@REPO@</string>
 	<key>LSRequiresIPhoneOS</key>

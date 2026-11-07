@@ -85,6 +85,8 @@ struct SettingsView: View {
                         .foregroundStyle(Theme.ink(0.55))
                 }
 
+                CertificatePlate()
+
                 AIAccounts()
 
                 Plate("Make a token") {

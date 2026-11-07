@@ -20,11 +20,35 @@ concurrency:
 jobs:
   ipa:
     runs-on: macos-15-intel
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packaging/ios/builder/signer
+          key: horizon-mods-signer
+      - name: The signer on a real Horizon build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The newest Horizon .ipa's program, and a throwaway certificate shaped like an Apple
+          # Development one (the iPhone's own check of the signature can only happen on an iPhone).
+          tag=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=30" --jq '[.[]|select(.tag_name|test("^ios-r[0-9]+$"))][0].tag_name')
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern '*.ipa' --dir "$RUNNER_TEMP/ipa"
+          unzip -q "$RUNNER_TEMP"/ipa/*.ipa 'Payload/*.app/horizon-client' -d "$RUNNER_TEMP/ipa"
+          cd "$RUNNER_TEMP"
+          openssl req -x509 -newkey rsa:2048 -nodes -keyout key.pem -out cert.pem -days 30 \
+            -subj "/CN=Apple Development: Horizon Test (ABCDE12345)/OU=ABCDE12345/O=Horizon Test/C=US"
+          openssl pkcs12 -export -inkey key.pem -in cert.pem -out test.p12 -passout pass:horizon
+          cd "$GITHUB_WORKSPACE/packaging/ios/builder/signer"
+          HORIZON_TEST_PROGRAM=$(ls "$RUNNER_TEMP"/ipa/Payload/*.app/horizon-client) \
+          HORIZON_TEST_P12="$RUNNER_TEMP/test.p12" HORIZON_TEST_P12_PASSWORD=horizon \
+            cargo test --release --locked -- --nocapture
       - name: Build
         run: |
           chmod +x packaging/ios/builder/package.sh

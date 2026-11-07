@@ -13,6 +13,9 @@ struct PlayView: View {
             VStack(alignment: .leading, spacing: 14) {
                 PageHeader(title: "Play", caption: "Horizon builds on this iPhone. Get one, then play it right here.")
                 gameFiles
+                if let last = Launcher.lastError {
+                    ErrorPlate(message: last) { Launcher.lastError = nil }
+                }
                 if let error = library.error {
                     ErrorPlate(message: error) { library.error = nil; Task { await library.refresh(gitHub: store.gitHubClient) } }
                 }
@@ -67,6 +70,9 @@ struct PlayView: View {
 
 struct LocalBuildCard: View {
     @EnvironmentObject var store: Store
+    @EnvironmentObject var library: Library
+    @State private var starting = false
+    @State private var problem: String?
     let build: LocalBuild
     let delete: () -> Void
 
@@ -91,18 +97,31 @@ struct LocalBuildCard: View {
                     HIcon(name: "more-horizontal", size: 20).foregroundStyle(Theme.ink(0.7)).frame(width: 36, height: 36)
                 }
             }
-            Button {} label: {
+            Button {
+                Task {
+                    starting = true
+                    do {
+                        try await Launcher.play(build, library: library)
+                    } catch {
+                        problem = error.localizedDescription
+                    }
+                    starting = false
+                }
+            } label: {
                 HStack(spacing: 8) {
-                    HIcon(name: "play", size: 18)
-                    Text("Play")
+                    if starting { ProgressView().tint(Color.white) } else { HIcon(name: "play", size: 18) }
+                    Text(starting ? (build.signedWith == nil ? "Signing…" : "Starting…") : "Play")
                 }
                 .frame(maxWidth: .infinity)
             }
             .buttonStyle(AccentButton(height: 46))
-            .disabled(true)
-            .opacity(0.45)
-            Text("Playing inside Horizon Mods comes in the next update. The build is downloaded and ready for it.")
-                .font(.geist(12)).foregroundStyle(Theme.ink(0.55))
+            .disabled(starting)
+            if let problem {
+                Text(problem).font(.geist(12)).foregroundStyle(Theme.warn)
+            } else {
+                Text("Plays inside Horizon Mods. To come back here, close the game (swipe it away) and open Horizon Mods again.")
+                    .font(.geist(12)).foregroundStyle(Theme.ink(0.55))
+            }
         }
         .padding(16)
         .glass()

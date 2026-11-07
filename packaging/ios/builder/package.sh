@@ -15,8 +15,13 @@ out=$(mkdir -p "$3" && cd "$3" && pwd)
 stage=$(mktemp -d)
 app=$stage/Payload/HorizonMods.app
 mkdir -p "$app"
+# The signer (signer/, Rust), as a static library the app links.
+IPHONEOS_DEPLOYMENT_TARGET=16.0 cargo build --release --locked --target aarch64-apple-ios \
+  --manifest-path "$here/signer/Cargo.toml"
+signer="$here/signer/target/aarch64-apple-ios/release"
 xcrun --sdk iphoneos swiftc -target arm64-apple-ios16.0 -O -parse-as-library \
-  -o "$app/HorizonMods" "$here"/Sources/*.swift
+  -o "$app/HorizonMods" "$here"/Sources/*.swift \
+  -L "$signer" -lhorizon_mods_signer -framework Security -framework CoreFoundation
 chmod 755 "$app/HorizonMods"
 sed -e "s/@VERSION@/$version/g" -e "s#@REPO@#$repo#g" "$here/Info.plist" > "$app/Info.plist"
 plutil -lint "$app/Info.plist"
