@@ -166,6 +166,29 @@ FIXES: dict[tuple[str, str], list[tuple[str, str, str]]] = {
          '    }\n'
          '}'),
     ],
+    # The server's particles have a speed per axis, block loot takes the block entity (none for logs
+    # and leaves), and a hit says which species struck (none for a falling tree).
+    ("chop", "1.0.1"): [
+        ("server.rs",
+         "                spread,\n                speed,\n                count: ((base * k).round() as i32).max(1),",
+         "                spread,\n                speed: [speed; 3],\n                count: ((base * k).round() as i32).max(1),"),
+        ("server.rs",
+         "game.block_loot_at(s.cut, s.cut_state, s.tool.as_ref())",
+         "game.block_loot_at(s.cut, s.cut_state, s.tool.as_ref(), None)"),
+        ("server.rs",
+         "game.block_loot_at(part.cell, id, s.tool.as_ref())",
+         "game.block_loot_at(part.cell, id, s.tool.as_ref(), None)"),
+        ("server.rs",
+         "game.block_loot_at(*h, id, s.tool.as_ref())",
+         "game.block_loot_at(*h, id, s.tool.as_ref(), None)"),
+        ("server.rs",
+         "game.block_loot_at(leaf, id, None)",
+         "game.block_loot_at(leaf, id, None, None)"),
+        ("server.rs",
+         "                    from: Some([pos[0] - dir[0], pos[1], pos[2] - dir[1]]),\n                },",
+         "                    from: Some([pos[0] - dir[0], pos[1], pos[2] - dir[1]]),\n"
+         "                    attacker_species: None,\n                },"),
+    ],
     # The title screen's buttons have a controller `action` now: none for the Mods button.
     ("mod_menu", "0.3.3"): [
         ("title_buttons.rs",
@@ -177,6 +200,10 @@ FIXES: dict[tuple[str, str], list[tuple[str, str, str]]] = {
         ("horizon-mixin.toml",
          'target = "horizon_client::lan::hub::Hub::stack"',
          'target = "horizon_client_lib::lan::hub::Hub::stack"'),
+        # The tooltip's box is a method now, and takes the stack (its rarity's border colours).
+        ("tooltip.rs",
+         "    crate::game::Game::tooltip_box(batch, atlas, at.x, at.y, at.w, at.h);",
+         "    game.tooltip_box(batch, Some(stack), at.x, at.y, at.w, at.h);"),
     ],
 }
 

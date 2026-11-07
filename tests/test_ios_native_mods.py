@@ -44,6 +44,12 @@ class Fixes(unittest.TestCase):
         self.dir = pathlib.Path(tempfile.mkdtemp())
         self.root = self.dir / "shulker_peek" / "mixins" / "shulker_peek"
         self.root.mkdir(parents=True)
+        saved = native_mods.FIXES
+        native_mods.FIXES = {("shulker_peek", "0.1.0"): [(
+            "horizon-mixin.toml",
+            'target = "horizon_client::lan::hub::Hub::stack"',
+            'target = "horizon_client_lib::lan::hub::Hub::stack"')]}
+        self.addCleanup(setattr, native_mods, "FIXES", saved)
 
     def test_a_listed_version_is_retargeted_and_keeps_its_line_endings(self):
         (self.root / "horizon-mixin.toml").write_bytes(
