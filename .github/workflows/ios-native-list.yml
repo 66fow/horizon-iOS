@@ -1,0 +1,41 @@
+# Keeps the "Native mods for iOS" issue's checklist up to date with Horizon's registry: every
+# native mod for 26.3, the ticks people made kept (packaging/ios/native-mods.md). Ticking
+# "Build now" there starts ios-native-build.yml.
+name: Native mods for iOS (checklist)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 9 * * *"
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  checklist:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ios-build
+          persist-credentials: false
+      - name: Update the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: Native mods for iOS
+        run: |
+          curl -fsSL https://horizon-rust.github.io/horizon-mods/index.json -o index.json
+          number=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "\"$TITLE\" in:title" --json number,title \
+            --jq "map(select(.title == \"$TITLE\")) | .[0].number // empty")
+          if [ -n "$number" ]; then
+            gh issue view "$number" --repo "$GITHUB_REPOSITORY" --json body --jq .body > old.md
+          else
+            : > old.md
+          fi
+          python3 -I packaging/ios/native/native_mods.py checklist index.json old.md new.md
+          if [ -z "$number" ]; then
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body-file new.md
+          elif ! cmp -s old.md new.md; then
+            gh issue edit "$number" --repo "$GITHUB_REPOSITORY" --body-file new.md
+          fi
