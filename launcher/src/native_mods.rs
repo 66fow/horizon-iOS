@@ -2052,6 +2052,132 @@ fn copy_bundle(bundle: &Bundle, to: &Path) -> Result<(), String> {
     backend::copy_dir_except(&root, to, skip.as_deref()).map_err(|e| e.to_string())
 }
 
+/// What [`stage_only`] staged: the mods applied, in order, and the package to build.
+#[derive(Debug, serde::Serialize)]
+pub struct Staged {
+    pub mods: Vec<String>,
+    /// `horizon-client`, or the trait mods' package when a mod brings an API.
+    pub package: String,
+    /// Whether the source has the `mods` feature to build with.
+    pub mods_feature: bool,
+}
+
+/// A native build's staging without its compile, for a game this launcher doesn't build: the
+/// iOS app, which GitHub compiles on a Mac (packaging/ios/native-mods.md). The mods in `folder`
+/// are applied to the Horizon workspace `source` (a checkout, whose commit is `revision`) into
+/// `out`, as [`pipeline`] stages them: every mod is repinned to `revision` (they are built on it
+/// whatever they were made for), horizon-mixins applies them, trait injections, data, the API
+/// package and the mods' crates are staged. `rust` is a Rust toolchain folder (with `bin/cargo`).
+pub fn stage_only(
+    folder: &Path,
+    source: &Path,
+    revision: &str,
+    out: &Path,
+    rust: &Path,
+) -> Result<Staged, String> {
+    let rust = Toolchain {
+        dir: rust.to_path_buf(),
+        host: rust_toolchain::host().ok_or("This platform has no native mod host.")?,
+    };
+    fs::create_dir_all(root()).map_err(|e| e.to_string())?;
+    let incoming = root().join("mods.incoming");
+    let _ = fs::remove_dir_all(&incoming);
+    let found = bundles(folder)?;
+    for warning in warn_conflicts(&found) {
+        log_warning(&warning);
+    }
+    let mut ids = std::collections::HashSet::new();
+    for b in &found {
+        if !ids.insert(&b.id) {
+            return Err(format!("Duplicate native mod id {:?}.", b.id));
+        }
+        copy_bundle(b, &incoming.join(&b.id))?;
+    }
+    let mods: Vec<Bundle> = found
+        .into_iter()
+        .map(|b| Bundle {
+            dir: incoming.join(&b.id),
+            ..b
+        })
+        .collect();
+    let declared: Vec<Vec<dependencies::Dependency>> = mods
+        .iter()
+        .map(|bundle| {
+            let path = bundle.dir.join(MANIFEST);
+            let text = fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            let table: toml::Table = text
+                .parse()
+                .map_err(|e| format!("{}: {e}", path.display()))?;
+            dependencies::parse(&bundle.id, table.get("dependencies")).map_err(|e| e.to_string())
+        })
+        .collect::<Result<_, String>>()?;
+    let inputs: Vec<_> = mods
+        .iter()
+        .zip(&declared)
+        .map(|(bundle, deps)| dependencies::Mod {
+            id: &bundle.id,
+            version: &bundle.version,
+            has_api: bundle.api.is_some(),
+            dependencies: deps,
+        })
+        .collect();
+    let resolution = dependencies::resolve(&inputs).map_err(|e| e.to_string())?;
+    let ordered: Vec<Bundle> = resolution.order.iter().map(|&i| mods[i].clone()).collect();
+    for b in &mods {
+        repin(b, revision)?;
+    }
+    let mixins = newest(
+        &mods,
+        "horizon-mixins",
+        |b| b.mixins.as_ref(),
+        || Ok(MIXINS_REV.into()),
+        Some(MIXINS_REV),
+        |r| committed("horizon-rust/horizon-mixins", r),
+    )?;
+    let real = root();
+    let fresh = real.join("stage.new");
+    let _ = fs::remove_dir_all(&fresh);
+    if mods.iter().any(|m| m.mixins_content) {
+        let injections = inject::prepare(&ordered, source)?;
+        let tool = tool(&rust, &mixins, &|_| {})?;
+        let mixin_input = real.join("mixins.incoming");
+        stage_mixins(&ordered, &mixin_input)?;
+        let result = run(
+            apply(&rust, &tool, source, &mixin_input, &fresh),
+            "horizon-mixins",
+            |_| {},
+        );
+        let _ = fs::remove_dir_all(&mixin_input);
+        result?;
+        inject::stage(&fresh, &injections)?;
+    } else {
+        sync(source, &fresh)?;
+    }
+    stage_trait_data(&mods, &fresh)?;
+    if mods.iter().any(|m| m.api.is_some()) {
+        let mut fetch = cargo(&rust, source, "fetch");
+        fetch.arg("--locked");
+        run(fetch, "Downloading Horizon's crates", |_| {})?;
+    }
+    let has_api = api::stage(&fresh, &mods, &declared, &resolution)?;
+    if has_api {
+        let mut metadata = cargo(&rust, &fresh, "metadata");
+        metadata.args(["--offline", "--format-version", "1"]);
+        run(metadata, "Resolving trait mod crates", |_| {})?;
+    }
+    if crates::any(&fresh) || has_api {
+        lock_crates(&rust, source, &fresh, &mods)?;
+    }
+    sync(&fresh, out)?;
+    let _ = fs::remove_dir_all(&fresh);
+    let _ = fs::remove_dir_all(&incoming);
+    Ok(Staged {
+        mods: ordered.iter().map(|b| b.id.clone()).collect(),
+        package: if has_api { api::PACKAGE } else { "horizon-client" }.into(),
+        mods_feature: has_mods_feature(out),
+    })
+}
+
 /// Stage only manifests horizon-mixins can apply, after trait injections are prepared.
 fn stage_mixins(mods: &[Bundle], to: &Path) -> Result<(), String> {
     if to.exists() {

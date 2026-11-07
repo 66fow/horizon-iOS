@@ -788,6 +788,29 @@ enum Cmd {
         #[arg(long)]
         clear: bool,
     },
+    /// Stage native mods onto a Horizon checkout without compiling, for a game built elsewhere
+    /// (the iOS app, packaging/ios/native-mods.md): the mods in FOLDER applied to SOURCE into
+    /// OUT, as native-build stages them. Prints what was staged as JSON. Not sandboxed: the
+    /// mods' code runs in the game built from OUT
+    NativeStage {
+        /// A mod folder (horizon-mixin.toml, or an unpacked .hnmod), or a folder of them
+        folder: PathBuf,
+        /// The Horizon workspace to apply them to
+        #[arg(long)]
+        source: PathBuf,
+        /// Its commit: every mod is built on it
+        #[arg(long)]
+        revision: String,
+        /// Where the staged workspace goes
+        #[arg(long)]
+        out: PathBuf,
+        /// A Rust toolchain folder (holding bin/cargo)
+        #[arg(long)]
+        rust: PathBuf,
+        /// You read the mods' source and trust it with full access to the game it goes in
+        #[arg(long)]
+        trust_native_code: bool,
+    },
     /// Native mods (docs/native-mods.md): compile mixin bundles on the Horizon revision they
     /// pin, else the one the instance plays, with the launcher's own Rust, as the version the
     /// instance then plays. Not sandboxed: the mods' code runs with your rights
@@ -1310,6 +1333,20 @@ fn execute(command: Cmd, as_json: bool) -> Result<(), String> {
                 "{}",
                 serde_json::to_string_pretty(&native_mods::cache_info(clear)?).unwrap()
             );
+        }
+        Cmd::NativeStage {
+            folder,
+            source,
+            revision,
+            out,
+            rust,
+            trust_native_code,
+        } => {
+            if !trust_native_code {
+                return Err("Native mods run with full access to the game they are built into. Read their source, then pass --trust-native-code.".into());
+            }
+            let staged = native_mods::stage_only(&folder, &source, &revision, &out, &rust)?;
+            println!("{}", serde_json::to_string_pretty(&staged).unwrap());
         }
         Cmd::NativeBuild {
             folder,
