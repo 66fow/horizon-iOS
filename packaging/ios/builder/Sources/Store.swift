@@ -62,6 +62,13 @@ final class Store: ObservableObject {
         runMods = defaults.dictionary(forKey: "runMods") as? [String: [String]] ?? [:]
         runInstance = defaults.dictionary(forKey: "runInstance") as? [String: String] ?? [:]
         hidden = Set(defaults.stringArray(forKey: "hiddenInstances") ?? [])
+        // `-HorizonTab builds` opens on a tab (the preview screenshots use it).
+        switch defaults.string(forKey: "HorizonTab") {
+        case "builds": tab = .builds
+        case "instances": tab = .instances
+        case "settings": tab = .settings
+        default: break
+        }
     }
 
     private var gitHub: GitHub {

@@ -1,0 +1,47 @@
+# Screenshots Horizon Mods in an iPhone simulator, one per tab, for checking its look.
+name: iOS Horizon Mods preview
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  shots:
+    runs-on: macos-15-intel
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build for the simulator
+        run: |
+          app=sim/HorizonMods.app
+          mkdir -p "$app"
+          xcrun --sdk iphonesimulator swiftc -target x86_64-apple-ios16.0-simulator -parse-as-library \
+            -o "$app/HorizonMods" packaging/ios/builder/Sources/*.swift
+          sed -e "s/@VERSION@/1.0.0/g" -e "s#@REPO@#$GITHUB_REPOSITORY#g" packaging/ios/builder/Info.plist > "$app/Info.plist"
+          cp packaging/ios/builder/Resources/* "$app/"
+          codesign --force --sign - "$app"
+      - name: Screenshot each tab
+        run: |
+          xcrun simctl list devices available | grep -m1 -o "iPhone 1[5-7][^(]*([0-9A-F-]*)" || true
+          udid=$(xcrun simctl list devices available -j | python3 -c '
+          import json,sys
+          d=json.load(sys.stdin)["devices"]
+          print(next(x["udid"] for v in d.values() for x in v if x["name"].startswith("iPhone 16") or x["name"].startswith("iPhone 15")))')
+          xcrun simctl boot "$udid"
+          xcrun simctl bootstatus "$udid" -b
+          xcrun simctl install "$udid" sim/HorizonMods.app
+          mkdir shots
+          for tab in mods builds instances settings; do
+            xcrun simctl terminate "$udid" dev.horizon.mods || true
+            xcrun simctl launch "$udid" dev.horizon.mods -HorizonTab "$tab"
+            sleep 12
+            xcrun simctl io "$udid" screenshot "shots/$tab.png"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shots
+          path: shots/
