@@ -41,6 +41,14 @@ jobs:
             sleep 12
             xcrun simctl io "$udid" screenshot "shots/$tab.png"
           done
+      - name: Print them, small, into the log
+        run: |
+          for f in shots/*.png; do
+            sips -Z 900 -s format jpeg -s formatOptions 70 "$f" --out "${f%.png}.jpg" >/dev/null
+            echo "SHOT-BEGIN $(basename "${f%.png}")"
+            base64 -i "${f%.png}.jpg" | fold -w 1000
+            echo "SHOT-END"
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: shots
