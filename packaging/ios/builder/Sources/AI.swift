@@ -10,12 +10,13 @@ import UIKit
 /// subscriptions are not offered: Anthropic's terms forbid using a Claude.ai login in other
 /// apps, and Google has no allowed way for apps to use a Gemini subscription.
 enum Provider: String, CaseIterable, Identifiable, Codable {
-    case chatgpt, claude, openai, gemini
+    case chatgpt, copilot, claude, openai, gemini
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .chatgpt: return "ChatGPT (your plan)"
+        case .copilot: return "GitHub Copilot (your plan)"
         case .claude: return "Claude (API key)"
         case .openai: return "OpenAI (API key)"
         case .gemini: return "Gemini (API key)"
@@ -25,6 +26,7 @@ enum Provider: String, CaseIterable, Identifiable, Codable {
     var short: String {
         switch self {
         case .chatgpt: return "ChatGPT"
+        case .copilot: return "Copilot"
         case .claude: return "Claude"
         case .openai: return "OpenAI"
         case .gemini: return "Gemini"
@@ -35,6 +37,7 @@ enum Provider: String, CaseIterable, Identifiable, Codable {
     var keyPage: URL? {
         switch self {
         case .chatgpt: return nil
+        case .copilot: return URL(string: "https://github.com/settings/personal-access-tokens/new")
         case .claude: return URL(string: "https://console.anthropic.com/settings/keys")
         case .openai: return URL(string: "https://platform.openai.com/api-keys")
         case .gemini: return URL(string: "https://aistudio.google.com/apikey")
@@ -44,7 +47,7 @@ enum Provider: String, CaseIterable, Identifiable, Codable {
     var defaultModel: String {
         switch self {
         // OpenAI's and Google's names change often: theirs are picked from the account's list.
-        case .chatgpt, .openai, .gemini: return ""
+        case .chatgpt, .openai, .gemini, .copilot: return ""
         case .claude: return "claude-sonnet-5-5"
         }
     }
@@ -373,6 +376,8 @@ struct AIClient {
     func send(instructions: String, turns: [ChatTurn], onText: @escaping (String) -> Void) async throws -> String {
         let request: URLRequest
         switch provider {
+        case .copilot:
+            throw AIError(message: "Copilot answers on GitHub, not from here.")
         case .claude:
             request = try json("https://api.anthropic.com/v1/messages", headers: [
                 "x-api-key": key, "anthropic-version": "2023-06-01",
@@ -434,6 +439,8 @@ struct AIClient {
 
     private static func delta(_ provider: Provider, _ event: [String: Any]) -> String? {
         switch provider {
+        case .copilot:
+            return nil
         case .claude:
             guard event["type"] as? String == "content_block_delta",
                   let delta = event["delta"] as? [String: Any] else { return nil }
@@ -481,6 +488,8 @@ struct AIClient {
     func models() async throws -> [String] {
         var request: URLRequest
         switch provider {
+        case .copilot:
+            return []
         case .claude:
             request = URLRequest(url: URL(string: "https://api.anthropic.com/v1/models?limit=100")!)
             request.setValue(key, forHTTPHeaderField: "x-api-key")
@@ -498,6 +507,8 @@ struct AIClient {
             throw AIError(message: Self.describe(provider, status, String(data: data, encoding: .utf8) ?? ""))
         }
         switch provider {
+        case .copilot:
+            return []
         case .gemini:
             return ((object["models"] as? [[String: Any]]) ?? [])
                 .filter { (($0["supportedGenerationMethods"] as? [String]) ?? []).contains("generateContent") }

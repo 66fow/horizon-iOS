@@ -194,9 +194,21 @@ enum Prompt {
         ("data/minecraft/tags/block/mineable/pickaxe.json", "pickaxe.json"),
     ]
 
-    static func instructions(kind: ModKind, repo: String) async -> String {
+    /// For Copilot, which reads Horizon's files itself on GitHub (ios-copilot.yml): where they are.
+    static func localReference(_ kind: ModKind) -> String {
+        switch kind {
+        case .content:
+            return "Read ./docs/mods.md (\"The manifest\" and \"Content mods (API 0.2)\"), ./docs/modpacks.md (\"Registries 0.2\") and the example mod in ./template/content (Horizon's cargo horizon-mod template: horizon-mod.toml; block.json goes to data/<id>/horizon/block/, blockstate.json to assets/<id>/blockstates/, model.json to assets/<id>/models/block/, item.json to assets/<id>/items/, lang.json to assets/<id>/lang/en_us.json, loot.json to data/<id>/loot_table/blocks/, recipe.json to data/<id>/recipe/, pickaxe.json to data/minecraft/tags/block/mineable/)."
+        case .native:
+            return "Read ./docs/native-mods.md (\"Trait mods (draft)\"), the example mod in ./template/native (horizon-mixin.toml, api.toml as api/Cargo.toml, lib.rs as api/src/lib.rs) and ./crates/horizon-client/src/mod_api.rs, everything a trait mod can use."
+        }
+    }
+
+    static func instructions(kind: ModKind, repo: String, local: Bool = false) async -> String {
         var reference = [String]()
         switch kind {
+        case _ where local:
+            reference.append(localReference(kind))
         case .content:
             let mods = await source(repo, "docs/mods.md")
             reference.append(section(mods, "### The manifest"))
@@ -308,8 +320,17 @@ final class Maker: ObservableObject {
 
     // MARK: Accounts
 
+    /// The player said COPILOT_TOKEN is set in the fork's secrets.
+    @Published var copilotReady: Bool = UserDefaults.standard.bool(forKey: "copilotReady") {
+        didSet { UserDefaults.standard.set(copilotReady, forKey: "copilotReady") }
+    }
+
     func connected(_ p: Provider) -> Bool {
-        p == .chatgpt ? chatgpt != nil : !(keys[p] ?? "").isEmpty
+        switch p {
+        case .chatgpt: return chatgpt != nil
+        case .copilot: return copilotReady
+        default: return !(keys[p] ?? "").isEmpty
+        }
     }
 
     var anyConnected: Bool { Provider.allCases.contains(where: connected) }
@@ -416,7 +437,7 @@ final class Maker: ObservableObject {
     // MARK: Writing with the AI
 
     /// Sends the player's `text` (or, with nil, the last check's errors) and takes the answer.
-    func send(_ key: UUID, text: String?, repo: String) async {
+    func send(_ key: UUID, text: String?, repo: String, gitHub: GitHub? = nil) async {
         guard var draft = draft(key), thinking == nil else { return }
         let message: String
         if let text {
@@ -432,10 +453,17 @@ final class Maker: ObservableObject {
         streamed = ""
         defer { thinking = nil }
         do {
-            let ai = try await client(provider)
-            let instructions = await Prompt.instructions(kind: draft.kind, repo: repo)
-            let answer = try await ai.send(instructions: instructions, turns: draft.chat) { [weak self] partial in
-                Task { @MainActor in self?.streamed = partial }
+            let answer: String
+            if provider == .copilot {
+                guard let gitHub else { throw AIError(message: "Add your GitHub token in Settings first.") }
+                let instructions = await Prompt.instructions(kind: draft.kind, repo: repo, local: true)
+                answer = try await copilot(key, instructions: instructions, turns: draft.chat, gitHub: gitHub)
+            } else {
+                let ai = try await client(provider)
+                let instructions = await Prompt.instructions(kind: draft.kind, repo: repo)
+                answer = try await ai.send(instructions: instructions, turns: draft.chat) { [weak self] partial in
+                    Task { @MainActor in self?.streamed = partial }
+                }
             }
             guard var latest = self.draft(key) else { return }
             latest.chat.append(ChatTurn(role: .assistant, text: answer))
@@ -460,6 +488,51 @@ final class Maker: ObservableObject {
         } catch {
             notice = error.localizedDescription
         }
+    }
+
+    // MARK: Copilot, on GitHub
+
+    /// One turn answered by Copilot CLI in ios-copilot.yml: the request is committed to the
+    /// user-mods branch, the workflow commits the answer beside it, and this waits for it.
+    func copilot(_ key: UUID, instructions: String, turns: [ChatTurn], gitHub: GitHub) async throws -> String {
+        let turn = turns.count
+        let chat = key.uuidString.lowercased()
+        let transcript = turns.map { "## \($0.role == .user ? "Player" : "Assistant")\n\n\($0.text)" }.joined(separator: "\n\n")
+        let request = "\(instructions)\n\n# The conversation so far\n\n\(transcript)\n\n# Your turn\n\nWrite the next assistant turn, as the instructions above say.\n"
+        let folder = ".chats/\(chat)/"
+        streamed = "Sending your message to Copilot on GitHub…"
+        try await Self.commit(gitHub, branch: "user-mods", prefix: "", files: [(folder + "\(turn)-request.md", Data(request.utf8))],
+                              message: "Mod maker: a turn for Copilot", orphan: true)
+        let path = "/actions/workflows/ios-copilot.yml/dispatches"
+        var body: [String: Any] = ["ref": "ios-build", "inputs": ["chat": chat, "turn": String(turn), "model": models[.copilot] ?? ""],
+                                   "return_run_details": true]
+        let data: Data
+        do {
+            data = try await gitHub.data(path, method: "POST", json: body)
+        } catch let error as GitHubError where error.code == 422 && error.message.contains("return_run_details") {
+            body["return_run_details"] = nil
+            data = try await gitHub.data(path, method: "POST", json: body)
+        }
+        let run = (try? GitHub.decoder.decode(Dispatched.self, from: data))?.workflowRunId
+        streamed = "Copilot is writing on GitHub (usually a minute or two)…"
+        let started = Date()
+        while Date().timeIntervalSince(started) < 30 * 60 {
+            try await Task.sleep(nanoseconds: 8_000_000_000)
+            if let file = try? await gitHub.object("/contents/\(folder)\(turn)-answer.md?ref=user-mods"),
+               let encoded = (file["content"] as? String)?.replacingOccurrences(of: "\n", with: ""),
+               let bytes = Data(base64Encoded: encoded), let answer = String(data: bytes, encoding: .utf8) {
+                return answer
+            }
+            if let run, let info = try? await gitHub.object("/actions/runs/\(run)"),
+               info["status"] as? String == "completed", info["conclusion"] as? String != "success" {
+                // The answer may still be on its way if the run just finished; one more look first.
+                if let file = try? await gitHub.object("/contents/\(folder)\(turn)-answer.md?ref=user-mods"), file["content"] != nil { continue }
+                let log = await Self.errors(run: run, gitHub: gitHub)
+                let reason = log.split(separator: "\n").first { $0.contains("::error::") || $0.lowercased().contains("error") }
+                throw AIError(message: "Copilot couldn't answer on GitHub. " + (reason.map { String($0).replacingOccurrences(of: "##[error]", with: "") } ?? log.prefix(300).description))
+            }
+        }
+        throw AIError(message: "Copilot didn't answer within 30 minutes.")
     }
 
     // MARK: GitHub

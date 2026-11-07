@@ -1,0 +1,97 @@
+# The mod maker's "GitHub Copilot" AI (packaging/ios/mod-maker.md): GitHub's Copilot CLI, run with the
+# player's own Copilot plan, answers one turn of a mod's conversation. Horizon Mods commits the turn to
+# the user-mods branch as `.chats/<chat>/<turn>-request.md` (the instructions, Horizon's reference and
+# the conversation so far) and runs this; the answer is committed beside it as `<turn>-answer.md`,
+# which the app reads back. Copilot only reads: it gets the request and Horizon's source, read-only.
+#
+# Needs the repository secret COPILOT_TOKEN: a fine-grained personal access token of the player's
+# with the "Copilot Requests" account permission (GitHub's own setup for Copilot CLI in Actions).
+name: iOS mod maker (GitHub Copilot)
+
+on:
+  workflow_dispatch:
+    inputs:
+      chat:
+        description: "The chat's id (a UUID)"
+        required: true
+      turn:
+        description: "The turn's number"
+        required: true
+      model:
+        description: "A Copilot model (blank: Copilot's default)"
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: copilot-${{ inputs.chat }}
+  cancel-in-progress: false
+
+jobs:
+  answer:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check the inputs and the secret
+        env:
+          CHAT: ${{ inputs.chat }}
+          TURN: ${{ inputs.turn }}
+          MODEL: ${{ inputs.model }}
+          HAS_TOKEN: ${{ secrets.COPILOT_TOKEN != '' }}
+        run: |
+          [[ "$CHAT" =~ ^[0-9A-Fa-f-]{36}$ ]] || { echo "::error::$CHAT is not a chat id"; exit 1; }
+          [[ "$TURN" =~ ^[0-9]{1,4}$ ]] || { echo "::error::$TURN is not a turn number"; exit 1; }
+          [[ -z "$MODEL" || "$MODEL" =~ ^[A-Za-z0-9._-]{1,64}$ ]] || { echo "::error::$MODEL is not a model name"; exit 1; }
+          if [ "$HAS_TOKEN" != "true" ]; then
+            echo "::error::COPILOT_TOKEN isn't set: add it under the repository's Settings > Secrets and variables > Actions (a fine-grained token with the Copilot Requests permission)"
+            exit 1
+          fi
+      - uses: actions/checkout@v4
+        with:
+          ref: ios-build
+          path: horizon
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: user-mods
+          path: user
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install GitHub Copilot CLI
+        run: npm install -g @github/copilot
+      - name: Ask Copilot
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_TOKEN }}
+          CHAT: ${{ inputs.chat }}
+          TURN: ${{ inputs.turn }}
+          MODEL: ${{ inputs.model }}
+        run: |
+          request="user/.chats/$CHAT/$TURN-request.md"
+          [ -f "$request" ] || { echo "::error::$request isn't on the user-mods branch"; exit 1; }
+          # Copilot reads the request and Horizon's source from a folder of its own; it can't edit or run anything.
+          work="$RUNNER_TEMP/work"
+          mkdir -p "$work"
+          cp "$request" "$work/request.md"
+          cp -R horizon/docs "$work/docs"
+          mkdir -p "$work/crates/horizon-client/src"
+          cp horizon/crates/horizon-client/src/mod_api.rs "$work/crates/horizon-client/src/"
+          cp -R horizon/crates/cargo-horizon-mod/template "$work/template"
+          cd "$work"
+          args=(-p "Read ./request.md and answer exactly as it asks, as the next assistant turn of its conversation. The files under ./docs, ./template and ./crates are Horizon's own documentation and source: read them for anything request.md doesn't already quote. Don't edit, create or run anything." -s --allow-tool=read --no-ask-user)
+          [ -n "$MODEL" ] && args+=(--model="$MODEL")
+          copilot "${args[@]}" > "$RUNNER_TEMP/answer.md"
+          [ -s "$RUNNER_TEMP/answer.md" ] || { echo "::error::Copilot sent back nothing"; exit 1; }
+      - name: Send the answer back
+        env:
+          CHAT: ${{ inputs.chat }}
+          TURN: ${{ inputs.turn }}
+        run: |
+          cd user
+          cp "$RUNNER_TEMP/answer.md" ".chats/$CHAT/$TURN-answer.md"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ".chats/$CHAT/$TURN-answer.md"
+          git commit -qm "Mod maker: Copilot's answer to $CHAT turn $TURN"
+          for i in 1 2 3; do git pull -q --rebase origin user-mods && git push -q origin HEAD:user-mods && break; sleep 3; done

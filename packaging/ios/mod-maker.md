@@ -6,7 +6,11 @@ Horizon Mods' **Create** tab writes mods with an AI and has GitHub check them, s
   with PKCE, the client registered on first sign-in, the redirect caught by a server on `127.0.0.1:1455` inside the
   app), or an API key for Claude, OpenAI or Gemini. Claude and Gemini subscriptions are not offered: Anthropic's terms
   forbid using a Claude.ai login in other apps, and Google has no allowed way for apps to use a Gemini plan. Keys and
-  tokens stay in the keychain.
+  tokens stay in the keychain. **GitHub Copilot** uses the player's Copilot plan through GitHub's Copilot CLI, which
+  can't run on an iPhone, so it runs in `ios-copilot.yml`: the app commits the turn to the user-mods branch as
+  `.chats/<chat>/<turn>-request.md`, Copilot reads it and Horizon's docs and source (read-only tools), and the answer
+  is committed beside it as `<turn>-answer.md`. It needs the repository secret `COPILOT_TOKEN` (a fine-grained token
+  with the Copilot Requests permission). GitHub Models, the old free API, was retired on 2026-07-30.
 - **What it's told.** Horizon's own documentation and source from this fork's `ios-build` branch: for a content mod
   the manifest and content sections of `docs/mods.md`, `docs/modpacks.md`'s Registries 0.2 and the
   `cargo horizon-mod new` template; for a native mod `docs/native-mods.md`'s Trait mods, the native template and

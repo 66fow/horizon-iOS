@@ -269,7 +269,7 @@ struct ModEditor: View {
                         .font(.mono(11)).foregroundStyle(Theme.ink(0.75)).lineLimit(4)
                 }
                 Button {
-                    Task { await maker.send(key, text: nil, repo: store.repo) }
+                    Task { await maker.send(key, text: nil, repo: store.repo, gitHub: store.hasToken ? store.gitHubClient : nil) }
                 } label: {
                     HStack(spacing: 8) {
                         HIcon(name: "refresh", size: 16)
@@ -311,7 +311,7 @@ struct ModEditor: View {
                 let message = text.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !message.isEmpty else { return }
                 text = ""
-                Task { await maker.send(key, text: message, repo: store.repo) }
+                Task { await maker.send(key, text: message, repo: store.repo, gitHub: store.hasToken ? store.gitHubClient : nil) }
             } label: {
                 Group {
                     if thinking { ProgressView().tint(Color.white) } else { HIcon(name: "arrow-right-01", size: 20) }
@@ -403,6 +403,8 @@ struct FileView: View {
 /// The AI accounts, in Settings.
 struct AIAccounts: View {
     @EnvironmentObject var maker: Maker
+    @EnvironmentObject var store: Store
+    private var storeRepo: String { store.repo.isEmpty ? "meehandaniel4/horizon-iOS" : store.repo }
     @State private var signingIn = false
     @State private var listing: Provider?
     @State private var lists: [Provider: [String]] = [:]
@@ -433,6 +435,21 @@ struct AIAccounts: View {
                     }
                     .buttonStyle(AccentButton(height: 44))
                 }
+            }
+            account(.copilot) {
+                Text("Uses your Copilot plan. Copilot runs on GitHub (your fork's Actions), so each answer takes a minute or two, and your requests are public there like the mods.")
+                    .font(.geist(13)).foregroundStyle(Theme.ink(0.7))
+                StepRow(number: 1, text: "Make a fine-grained token with the account permission Copilot Requests (Get a token below).")
+                StepRow(number: 2, text: "On GitHub, open your fork's Settings → Secrets and variables → Actions → New repository secret. Name it COPILOT_TOKEN and paste the token.")
+                HStack(spacing: 8) {
+                    if let page = Provider.copilot.keyPage { Link("Get a token", destination: page).buttonStyle(QuietButton()) }
+                    Link("Open the secrets", destination: URL(string: "https://github.com/\(storeRepo)/settings/secrets/actions/new")!)
+                        .buttonStyle(QuietButton())
+                }
+                Toggle(isOn: $maker.copilotReady) {
+                    Text("COPILOT_TOKEN is set").font(.geist(14, .medium)).foregroundStyle(Theme.ink(0.9))
+                }
+                .tint(Theme.accent)
             }
             ForEach([Provider.claude, .openai, .gemini]) { p in
                 account(p) {
@@ -480,7 +497,7 @@ struct AIAccounts: View {
                 .buttonStyle(.plain)
                 .disabled(!maker.connected(p))
                 Spacer()
-                if maker.connected(p) {
+                if maker.connected(p) && p != .copilot {
                     Menu {
                         if let list = lists[p], !list.isEmpty {
                             ForEach(list, id: \.self) { m in Button(m) { maker.models[p] = m } }
