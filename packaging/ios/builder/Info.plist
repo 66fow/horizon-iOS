@@ -66,11 +66,17 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
-	<key>LSApplicationQueriesSchemes</key>
+	<key>UIAppFonts</key>
 	<array>
-		<string>sidestore</string>
-		<string>altstore</string>
+		<string>Geist-Regular.ttf</string>
+		<string>Geist-Medium.ttf</string>
+		<string>Geist-SemiBold.ttf</string>
+		<string>GeistMono-Regular.ttf</string>
+		<string>BricolageGrotesqueHeading-SemiBold.ttf</string>
+		<string>BricolageGrotesqueDisplay-SemiBold.ttf</string>
 	</array>
+	<key>UIUserInterfaceStyle</key>
+	<string>Dark</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>Horizon is MIT licensed. Not an official Minecraft product; not approved by or associated with Mojang or Microsoft.</string>
 </dict>

@@ -1,7 +1,7 @@
 import Foundation
 import SwiftUI
 
-enum AppTab: Hashable { case mods, builds, settings }
+enum AppTab: Hashable { case mods, builds, instances, settings }
 
 /// Everything the app knows: the mod list, the picks, the token, and the builds on GitHub.
 @MainActor
@@ -34,13 +34,24 @@ final class Store: ObservableObject {
     @Published var starting = false
     /// A build that couldn't start, shown as an alert.
     @Published var notice: String?
+    /// Every instance built so far, newest first (one entry per instance, its latest build).
+    @Published var instances: [Instance] = []
+    /// Instances taken off the list on this iPhone.
+    @Published var hidden: Set<String> {
+        didSet { UserDefaults.standard.set(Array(hidden).sorted(), forKey: "hiddenInstances") }
+    }
+
+    /// The instance each run builds, by run id: "<id> <name>".
+    private var runInstance: [String: String] {
+        didSet { UserDefaults.standard.set(runInstance, forKey: "runInstance") }
+    }
 
     /// The mods each run was started with, by run id (GitHub doesn't keep a run's inputs).
     private var runMods: [String: [String]] {
         didSet { UserDefaults.standard.set(runMods, forKey: "runMods") }
     }
     /// A build started without GitHub saying which run it became: the next new run is it.
-    private var pending: (mods: [String], since: Date)?
+    private var pending: (mods: [String], instance: String, since: Date)?
 
     init() {
         let defaults = UserDefaults.standard
@@ -49,6 +60,8 @@ final class Store: ObservableObject {
         token = TokenStore.load()
         picked = Set(defaults.stringArray(forKey: "picked") ?? [])
         runMods = defaults.dictionary(forKey: "runMods") as? [String: [String]] ?? [:]
+        runInstance = defaults.dictionary(forKey: "runInstance") as? [String: String] ?? [:]
+        hidden = Set(defaults.stringArray(forKey: "hiddenInstances") ?? [])
     }
 
     private var gitHub: GitHub {
@@ -60,6 +73,14 @@ final class Store: ObservableObject {
     var activeCount: Int { runs.filter { $0.state == .running }.count }
     /// The picked mods that are in the list, in the list's order.
     var pickedInOrder: [String] { mods.map(\.id).filter(picked.contains) }
+
+    var shownInstances: [Instance] { instances.filter { !hidden.contains($0.id) } }
+
+    /// The instance a run builds: its id and name.
+    func instance(of run: Run) -> (id: String, name: String)? {
+        guard let entry = runInstance[String(run.id)], let space = entry.firstIndex(of: " ") else { return nil }
+        return (String(entry[..<space]), String(entry[entry.index(after: space)...]))
+    }
 
     func names(_ ids: [String]) -> String {
         ids.map { id in mods.first { $0.id == id }?.name ?? id }.joined(separator: ", ")
@@ -107,16 +128,19 @@ final class Store: ObservableObject {
 
     // MARK: Builds
 
-    func build() async {
+    /// Starts a build of the picked mods: into `instance` (updating it) or, when nil, a new one.
+    func build(instance: String?, name: String) async {
         let mods = pickedInOrder
         guard !mods.isEmpty, hasToken, !starting else { return }
         starting = true
         defer { starting = false }
         let since = Date()
+        let id = instance ?? String(Int.random(in: 100_000...999_999))
+        let name = name.trimmingCharacters(in: .whitespaces).isEmpty ? "Horizon \(id)" : name
         let path = "/actions/workflows/\(Self.workflow)/dispatches"
         var body: [String: Any] = [
             "ref": Self.branch,
-            "inputs": ["mods": mods.joined(separator: ",")],
+            "inputs": ["mods": mods.joined(separator: ","), "instance": id, "name": name],
             "return_run_details": true,
         ]
         do {
@@ -129,8 +153,9 @@ final class Store: ObservableObject {
             }
             if let run = try? GitHub.decoder.decode(Dispatched.self, from: data) {
                 runMods[String(run.workflowRunId)] = mods
+                runInstance[String(run.workflowRunId)] = "\(id) \(name)"
             } else {
-                pending = (mods, since)
+                pending = (mods, "\(id) \(name)", since)
             }
             tab = .builds
             try? await Task.sleep(nanoseconds: 3_000_000_000)
@@ -161,6 +186,7 @@ final class Store: ObservableObject {
                     && runMods[String($0.id)] == nil
             }) {
                 runMods[String(run.id)] = p.mods
+                runInstance[String(run.id)] = p.instance
                 pending = nil
             }
             runs = shown
@@ -169,6 +195,7 @@ final class Store: ObservableObject {
             for run in shown.prefix(hasToken ? 10 : 3) {
                 await refreshDetail(run)
             }
+            await refreshInstances()
         } catch {
             buildsError = error.localizedDescription
         }
@@ -201,6 +228,15 @@ final class Store: ObservableObject {
             detail.settled = true
         }
         details[run.id] = detail
+    }
+
+    func refreshInstances() async {
+        guard let releases: [ReleaseEntry] = try? await gitHub.get("/releases?per_page=60") else { return }
+        var newest: [String: Instance] = [:]
+        for instance in releases.compactMap(Instance.of) where (newest[instance.id]?.build ?? -1) < instance.build {
+            newest[instance.id] = instance
+        }
+        instances = newest.values.sorted { $0.date > $1.date }
     }
 
     /// Whether the token is accepted, and a line saying so.

@@ -5,23 +5,25 @@ struct BuildsView: View {
     @EnvironmentObject var store: Store
 
     var body: some View {
-        NavigationStack {
-            List {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                PageHeader(title: "Builds", caption: "GitHub compiles Horizon with your mods, then it's here to install.")
                 if let error = store.buildsError {
-                    Section { ErrorRow(message: error) { Task { await store.refreshRuns() } } }
+                    ErrorPlate(message: error) { Task { await store.refreshRuns() } }
                 }
                 if store.runs.isEmpty, store.buildsError == nil {
-                    Section { EmptyBuilds() }
+                    EmptyBuilds()
                 }
-                ForEach(store.runs) { run in
-                    Section {
+                LazyVStack(spacing: 10) {
+                    ForEach(store.runs) { run in
                         BuildCard(run: run, detail: store.details[run.id] ?? RunDetail())
                     }
                 }
             }
-            .navigationTitle("Builds")
-            .refreshable { await store.refreshRuns() }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 16)
         }
+        .refreshable { await store.refreshRuns() }
     }
 }
 
@@ -29,20 +31,20 @@ struct EmptyBuilds: View {
     @EnvironmentObject var store: Store
 
     var body: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "hammer")
-                .font(.largeTitle)
-                .foregroundStyle(.secondary)
-            Text("No builds yet").font(.headline)
-            Text("Pick mods and tap Build. Finished builds show up here, ready to install.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            Button("Pick mods") { store.tab = .mods }
-                .buttonStyle(.bordered)
+        Plate {
+            VStack(spacing: 10) {
+                HIcon(name: "package-01", size: 34).foregroundStyle(Theme.ink(0.5))
+                Text("No builds yet").font(.heading(20)).foregroundStyle(Theme.ink(1))
+                Text("Pick mods and tap Build. Finished builds show up here, ready to install.")
+                    .font(.geist(14))
+                    .foregroundStyle(Theme.ink(0.65))
+                    .multilineTextAlignment(.center)
+                Button("Pick mods") { store.tab = .mods }
+                    .buttonStyle(QuietButton())
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 24)
     }
 }
 
@@ -52,76 +54,90 @@ struct BuildCard: View {
     let detail: RunDetail
     @State private var confirmStop = false
 
+    private var chip: (String, Color) {
+        switch run.state {
+        case .running: return ("Building", Theme.accentSoft)
+        case .success: return ("Ready", Theme.live)
+        case .failed: return ("Failed", Theme.danger)
+        case .cancelled: return ("Stopped", Theme.ink(0.55))
+        }
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("Build \(run.runNumber)").font(.headline)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .center) {
+                Text("Build \(run.runNumber)")
+                    .font(.heading(22))
+                    .foregroundStyle(Theme.ink(1))
                 Spacer()
-                StatusBadge(state: run.state)
+                StateChip(label: chip.0, color: chip.1)
             }
-            if let mods = detail.mods, !mods.isEmpty {
-                Text(store.names(mods)).font(.subheadline)
+            VStack(alignment: .leading, spacing: 4) {
+                if let target = store.instance(of: run) {
+                    Text(target.name)
+                        .font(.geist(13, .semibold))
+                        .foregroundStyle(Theme.accentSoft)
+                }
+                if let mods = detail.mods, !mods.isEmpty {
+                    Text(store.names(mods))
+                        .font(.geist(14, .medium))
+                        .foregroundStyle(Theme.ink(0.85))
+                }
+                (Text("Started ") + Text(run.createdAt, style: .relative) + Text(" ago"))
+                    .font(.geist(12))
+                    .foregroundStyle(Theme.ink(0.5))
             }
-            (Text(run.createdAt, style: .relative) + Text(" ago"))
-                .font(.caption)
-                .foregroundStyle(.secondary)
             switch run.state {
             case .running:
-                ProgressView(value: detail.progress)
-                Text(detail.step)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                Button("Stop build", role: .destructive) { confirmStop = true }
-                    .buttonStyle(.borderless)
-                    .font(.subheadline)
+                ProgressBar(value: detail.progress)
+                HStack(alignment: .firstTextBaseline) {
+                    Text(detail.step)
+                        .font(.geist(12))
+                        .foregroundStyle(Theme.ink(0.65))
+                        .lineLimit(2)
+                    Spacer()
+                    Text("\(Int(detail.progress * 100))%")
+                        .font(.mono(12))
+                        .foregroundStyle(Theme.ink(0.65))
+                }
+                Button { confirmStop = true } label: {
+                    HStack(spacing: 6) {
+                        HIcon(name: "stop", size: 16)
+                        Text("Stop build")
+                    }
+                }
+                .buttonStyle(QuietButton(tint: Theme.danger))
             case .success:
                 if let asset = detail.asset {
                     InstallButtons(asset: asset)
                 } else {
                     Text("Finding the download…")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .font(.geist(13))
+                        .foregroundStyle(Theme.ink(0.6))
                 }
             case .failed:
-                Text(detail.failure ?? "This build didn't finish.").font(.subheadline)
+                Text(detail.failure ?? "This build didn't finish.")
+                    .font(.geist(14))
+                    .foregroundStyle(Theme.ink(0.8))
                 if let url = URL(string: run.htmlUrl) {
-                    Link("Open the log on GitHub", destination: url).font(.subheadline)
+                    Link(destination: url) {
+                        HStack(spacing: 6) {
+                            HIcon(name: "link-01", size: 16)
+                            Text("Open the log on GitHub")
+                        }
+                    }
+                    .buttonStyle(QuietButton())
                 }
             case .cancelled:
-                Text("Stopped.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                EmptyView()
             }
         }
-        .padding(.vertical, 6)
+        .padding(16)
+        .glass()
         .confirmationDialog("Stop build \(run.runNumber)?", isPresented: $confirmStop, titleVisibility: .visible) {
             Button("Stop build", role: .destructive) { Task { await store.cancel(run) } }
             Button("Keep building", role: .cancel) {}
         }
-    }
-}
-
-struct StatusBadge: View {
-    let state: Run.State
-
-    private var look: (String, Color) {
-        switch state {
-        case .running: return ("Building", .horizon)
-        case .success: return ("Ready", .green)
-        case .failed: return ("Failed", .red)
-        case .cancelled: return ("Stopped", .gray)
-        }
-    }
-
-    var body: some View {
-        let (label, color) = look
-        Text(label)
-            .font(.caption.bold())
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .foregroundStyle(color)
-            .background(color.opacity(0.15), in: Capsule())
     }
 }
 
@@ -141,10 +157,7 @@ struct InstallButtons: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("\(asset.name) · \(ByteCountFormatter.string(fromByteCount: Int64(asset.size), countStyle: .file))")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 Menu {
                     if let link = install("sidestore") {
                         Link(destination: link) { Label("Open in SideStore", systemImage: "arrow.down.app") }
@@ -156,30 +169,36 @@ struct InstallButtons: View {
                         Link(destination: url) { Label("Download in Safari", systemImage: "safari") }
                     }
                 } label: {
-                    Label("Install", systemImage: "arrow.down.circle.fill")
-                        .font(.subheadline.bold())
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
-                        .foregroundStyle(.white)
-                        .background(Color.horizon, in: Capsule())
+                    HStack(spacing: 8) {
+                        HIcon(name: "download-04", size: 18)
+                        Text("Install")
+                    }
+                    .font(.geist(15, .semibold))
+                    .foregroundStyle(Color.white)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 46)
+                    .background(RoundedRectangle(cornerRadius: Theme.Radius.large, style: .continuous).fill(Theme.accent))
                 }
                 if let url {
                     ShareLink(item: url) {
-                        Image(systemName: "square.and.arrow.up")
+                        HIcon(name: "upload-04", size: 18).frame(width: 46, height: 46)
                     }
-                    .buttonStyle(.bordered)
+                    .foregroundStyle(Theme.ink(0.9))
+                    .background(RoundedRectangle(cornerRadius: Theme.Radius.large, style: .continuous).fill(Theme.fill(0.08)))
                 }
                 Button {
                     UIPasteboard.general.string = asset.browserDownloadUrl
                     copied = true
                 } label: {
-                    Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                    HIcon(name: copied ? "tick-02" : "copy-01", size: 18).frame(width: 46, height: 46)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.plain)
+                .foregroundStyle(copied ? Theme.live : Theme.ink(0.9))
+                .background(RoundedRectangle(cornerRadius: Theme.Radius.large, style: .continuous).fill(Theme.fill(0.08)))
             }
-            Text("Install it over Horizon: your worlds and game files stay.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            Text("\(asset.name) · \(ByteCountFormatter.string(fromByteCount: Int64(asset.size), countStyle: .file)). Install it over Horizon: your worlds and game files stay.")
+                .font(.geist(12))
+                .foregroundStyle(Theme.ink(0.55))
         }
     }
 }

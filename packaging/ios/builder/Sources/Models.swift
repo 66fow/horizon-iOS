@@ -47,10 +47,14 @@ struct NativeMod: Decodable, Identifiable {
     let license: String
     let source: String
     let downloads: Int
+    /// Its icon, `https://` (PNG or JPEG).
+    let icon: String?
+    /// Its gallery, `https://` images in order.
+    let screenshots: [String]
     var versions: [ModVersion]
 
     private enum Keys: String, CodingKey {
-        case id, kind, name, summary, description, authors, license, source, downloads, versions
+        case id, kind, name, summary, description, authors, license, source, downloads, icon, screenshots, versions
     }
 
     init(from decoder: Decoder) throws {
@@ -64,6 +68,8 @@ struct NativeMod: Decodable, Identifiable {
         license = (try? c.decode(String.self, forKey: .license)) ?? ""
         source = (try? c.decode(String.self, forKey: .source)) ?? ""
         downloads = (try? c.decode(Int.self, forKey: .downloads)) ?? 0
+        icon = (try? c.decode(String.self, forKey: .icon)).flatMap { $0.hasPrefix("https://") ? $0 : nil }
+        screenshots = ((try? c.decode([String].self, forKey: .screenshots)) ?? []).filter { $0.hasPrefix("https://") }
         versions = ((try? c.decode([Lossy<ModVersion>].self, forKey: .versions)) ?? []).compactMap(\.value)
     }
 
@@ -200,5 +206,47 @@ enum BuildProgress {
         default:
             return "This build didn't finish."
         }
+    }
+}
+
+// MARK: Instances
+
+/// A release in the fork, as the Instances tab reads it.
+struct ReleaseEntry: Decodable {
+    let tagName: String
+    let body: String?
+    let assets: [Asset]
+    let createdAt: Date
+}
+
+/// One installable Horizon with native mods: its own app identifier
+/// (`dev.horizon.game.i<id>`) and link (`horizon-i<id>://`), so several sit side by side.
+struct Instance: Identifiable {
+    let id: String
+    var name: String
+    var mods: [String]
+    var build: Int
+    var asset: Asset?
+    var date: Date
+
+    var link: URL? { URL(string: "horizon-i\(id)://") }
+
+    private struct Marker: Decodable {
+        let id: String
+        let name: String
+        let mods: [String]
+    }
+
+    /// The instance a native build's release notes name (`<!-- horizon-instance {…} -->`).
+    static func of(_ release: ReleaseEntry) -> Instance? {
+        guard release.tagName.hasPrefix("ios-native-r"),
+              let build = Int(release.tagName.dropFirst("ios-native-r".count)),
+              let body = release.body,
+              let start = body.range(of: "<!-- horizon-instance "),
+              let end = body.range(of: " -->", range: start.upperBound..<body.endIndex),
+              let marker = try? JSONDecoder().decode(Marker.self, from: Data(body[start.upperBound..<end.lowerBound].utf8))
+        else { return nil }
+        return Instance(id: marker.id, name: marker.name, mods: marker.mods, build: build,
+                        asset: release.assets.first { $0.name.hasSuffix(".ipa") }, date: release.createdAt)
     }
 }

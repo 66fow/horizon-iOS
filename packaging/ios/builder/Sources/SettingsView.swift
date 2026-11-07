@@ -7,89 +7,124 @@ struct SettingsView: View {
     @State private var check: (ok: Bool, text: String)?
 
     var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    TextField("owner/repository", text: $store.repo)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .font(.body.monospaced())
-                } header: {
-                    Text("Your fork")
-                } footer: {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                PageHeader(title: "Settings", caption: "Your fork, and the token that lets this app start builds.")
+
+                Plate("Your fork") {
+                    FieldBox {
+                        TextField("", text: $store.repo, prompt: Text("owner/repository").foregroundColor(Theme.ink(0.4)))
+                            .font(.mono(15))
+                            .foregroundStyle(Theme.ink(1))
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                    }
                     Text("The GitHub repository that builds Horizon for iOS.")
+                        .font(.geist(12))
+                        .foregroundStyle(Theme.ink(0.55))
                 }
 
-                Section {
-                    SecureField("github_pat_…", text: $store.token)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                    Button {
-                        if let text = UIPasteboard.general.string {
-                            store.token = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                            check = nil
-                        }
-                    } label: {
-                        Label("Paste token", systemImage: "doc.on.clipboard")
+                Plate("GitHub token") {
+                    FieldBox {
+                        SecureField("", text: $store.token, prompt: Text("github_pat_…").foregroundColor(Theme.ink(0.4)))
+                            .font(.mono(15))
+                            .foregroundStyle(Theme.ink(1))
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
                     }
-                    Button {
-                        Task {
-                            checking = true
-                            let result = await store.checkToken()
-                            check = (result.0, result.1)
-                            checking = false
+                    HStack(spacing: 8) {
+                        Button {
+                            if let text = UIPasteboard.general.string {
+                                store.token = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                                check = nil
+                            }
+                        } label: {
+                            HStack(spacing: 6) {
+                                HIcon(name: "copy-01", size: 16)
+                                Text("Paste")
+                            }
                         }
-                    } label: {
-                        HStack {
-                            Label("Check token", systemImage: "checkmark.shield")
-                            Spacer()
-                            if checking { ProgressView() }
+                        .buttonStyle(QuietButton())
+                        Button {
+                            Task {
+                                checking = true
+                                let result = await store.checkToken()
+                                check = (result.0, result.1)
+                                checking = false
+                            }
+                        } label: {
+                            HStack(spacing: 6) {
+                                if checking {
+                                    ProgressView().tint(Theme.ink(0.8)).scaleEffect(0.8)
+                                } else {
+                                    HIcon(name: "tick-02", size: 16)
+                                }
+                                Text("Check")
+                            }
+                        }
+                        .buttonStyle(QuietButton())
+                        .disabled(!store.hasToken || checking)
+                        .opacity(!store.hasToken ? 0.4 : 1)
+                        Spacer()
+                        if store.hasToken {
+                            Button("Remove") {
+                                store.token = ""
+                                check = nil
+                            }
+                            .buttonStyle(QuietButton(tint: Theme.danger))
                         }
                     }
-                    .disabled(!store.hasToken || checking)
                     if let check {
-                        Label(check.text, systemImage: check.ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                            .font(.subheadline)
-                            .foregroundStyle(check.ok ? Color.green : Color.orange)
-                    }
-                    if store.hasToken {
-                        Button("Remove token", role: .destructive) {
-                            store.token = ""
-                            check = nil
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Rectangle().fill(check.ok ? Theme.live : Theme.warn).frame(width: 6, height: 6)
+                            Text(check.text).font(.geist(13)).foregroundStyle(Theme.ink(0.8))
                         }
                     }
-                } header: {
-                    Text("GitHub token")
-                } footer: {
                     Text("Kept in this iPhone's keychain, and only ever sent to GitHub.")
+                        .font(.geist(12))
+                        .foregroundStyle(Theme.ink(0.55))
                 }
 
-                Section {
+                Plate("Make a token") {
                     StepRow(number: 1, text: "Open GitHub's token page below and sign in.")
                     StepRow(number: 2, text: "Name it “Horizon Mods”. Under Repository access choose Only select repositories, then \(store.repo.isEmpty ? "your fork" : store.repo).")
                     StepRow(number: 3, text: "Under Permissions, Repository permissions, set Actions to Read and write.")
-                    StepRow(number: 4, text: "Tap Generate token, copy it, come back here and tap Paste token.")
+                    StepRow(number: 4, text: "Tap Generate token, copy it, come back here and tap Paste.")
                     Link(destination: URL(string: "https://github.com/settings/personal-access-tokens/new")!) {
-                        Label("Open GitHub's token page", systemImage: "safari")
+                        HStack(spacing: 8) {
+                            HIcon(name: "github", size: 18)
+                            Text("Open GitHub's token page")
+                        }
+                        .frame(maxWidth: .infinity)
                     }
-                } header: {
-                    Text("Make a token")
+                    .buttonStyle(AccentButton(height: 46))
                 }
 
-                Section {
+                Plate("About") {
                     Text("Native mods change Horizon's own code and run with full access to the app. Only build mods you trust.")
-                        .font(.subheadline)
-                    if let url = URL(string: "https://github.com/\(store.repo)/releases") {
-                        Link("All builds on GitHub", destination: url)
+                        .font(.geist(14))
+                        .foregroundStyle(Theme.ink(0.75))
+                    HStack {
+                        if let url = URL(string: "https://github.com/\(store.repo)/releases") {
+                            Link(destination: url) {
+                                HStack(spacing: 6) {
+                                    HIcon(name: "link-01", size: 16)
+                                    Text("All builds on GitHub")
+                                }
+                            }
+                            .buttonStyle(QuietButton())
+                        }
+                        Spacer()
+                        Text("Version " + (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"))
+                            .font(.mono(12))
+                            .foregroundStyle(Theme.ink(0.5))
                     }
-                    LabeledContent("Version",
-                                   value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?")
-                } header: {
-                    Text("About")
                 }
             }
-            .navigationTitle("Settings")
+            .padding(.horizontal, 16)
+            .padding(.bottom, 16)
         }
+        .scrollDismissesKeyboard(.interactively)
     }
 }
 
@@ -100,11 +135,14 @@ struct StepRow: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
             Text("\(number)")
-                .font(.caption.bold())
+                .font(.geist(12, .semibold))
+                .foregroundStyle(Color.white)
                 .frame(width: 22, height: 22)
-                .foregroundStyle(.white)
-                .background(Color.horizon, in: Circle())
-            Text(text).font(.subheadline)
+                .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Theme.accent))
+            Text(text)
+                .font(.geist(14))
+                .foregroundStyle(Theme.ink(0.82))
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }

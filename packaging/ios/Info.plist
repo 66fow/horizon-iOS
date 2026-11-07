@@ -1,16 +1,29 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- Horizon.app's Info.plist on iOS; package.sh fills in @VERSION@. -->
+<!-- Horizon.app's Info.plist on iOS; package.sh fills in @VERSION@, @NAME@, @BUNDLE@ and @SCHEME@
+     (a native-mod instance gets its own identifier and link, so several install side by side). -->
 <plist version="1.0">
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-	<string>Horizon</string>
+	<string>@NAME@</string>
 	<key>CFBundleExecutable</key>
 	<string>horizon-client</string>
 	<key>CFBundleIdentifier</key>
-	<string>dev.horizon.game</string>
+	<string>@BUNDLE@</string>
+	<!-- Horizon Mods opens an instance with this link (@SCHEME@://). -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>@BUNDLE@</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>@SCHEME@</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>

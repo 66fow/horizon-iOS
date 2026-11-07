@@ -21,6 +21,8 @@ chmod 755 "$app/HorizonMods"
 sed -e "s/@VERSION@/$version/g" -e "s#@REPO@#$repo#g" "$here/Info.plist" > "$app/Info.plist"
 plutil -lint "$app/Info.plist"
 printf 'APPL????' > "$app/PkgInfo"
+# Fonts, icons and pictures from horizon-theme (OFL, MIT) and the baked sunset (scene.py).
+cp "$here"/Resources/* "$app/"
 sips -z 120 120 "$here/icon.png" --out "$app/AppIcon60x60@2x.png" >/dev/null
 sips -z 180 180 "$here/icon.png" --out "$app/AppIcon60x60@3x.png" >/dev/null
 

@@ -6,6 +6,10 @@
 #
 #   packaging/ios/package.sh BINARY VERSION OUTDIR
 #
+# IOS_INSTANCE (digits) makes it a separate instance: identifier dev.horizon.game.i<digits>, link
+# horizon-i<digits>://, so it installs beside Horizon and other instances; IOS_NAME names it on the
+# home screen.
+#
 # Needs macOS (sips, plutil, ditto). Horizon ships none of Mojang's files: the player copies the
 # prepared resources into the app's Documents folder with the Files app (packaging/ios/README.md).
 set -euo pipefail
@@ -20,7 +24,17 @@ app=$stage/Payload/Horizon.app
 mkdir -p "$app"
 cp "$binary" "$app/horizon-client"
 chmod 755 "$app/horizon-client"
-sed "s/@VERSION@/$version/g" "$here/Info.plist" > "$app/Info.plist"
+instance=${IOS_INSTANCE:-}
+[[ -z "$instance" || "$instance" =~ ^[0-9]{4,12}$ ]] || { echo "IOS_INSTANCE must be 4-12 digits" >&2; exit 1; }
+if [[ -n "$instance" ]]; then
+  bundle=dev.horizon.game.i$instance scheme=horizon-i$instance name=${IOS_NAME:-Horizon $instance}
+else
+  bundle=dev.horizon.game scheme=horizon name=${IOS_NAME:-Horizon}
+fi
+# The home screen name, as plain text in the plist.
+name=$(printf '%s' "$name" | tr -d '<>&"\\/' | cut -c1-30)
+sed -e "s/@VERSION@/$version/g" -e "s/@BUNDLE@/$bundle/g" -e "s/@SCHEME@/$scheme/g" -e "s/@NAME@/$name/g" \
+  "$here/Info.plist" > "$app/Info.plist"
 plutil -lint "$app/Info.plist"
 printf 'APPL????' > "$app/PkgInfo"
 icon=$here/icon.png
