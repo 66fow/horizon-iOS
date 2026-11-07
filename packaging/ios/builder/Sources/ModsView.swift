@@ -24,9 +24,11 @@ struct ModsView: View {
     }
 
     var body: some View {
+        ScrollViewReader { reader in
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 PageHeader(title: "Native mods", caption: caption)
+                    .id("top")
                 if !store.hasToken { SetupCard() }
                 SearchField(text: $search)
                 Segmented(onlyPicked: $onlyPicked, picked: store.pickedInOrder.count)
@@ -34,6 +36,14 @@ struct ModsView: View {
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 16)
+        }
+        .onChange(of: store.demoScroll) { target in
+            guard let target else { return }
+            withAnimation(.easeInOut(duration: 1.4)) { reader.scrollTo(target, anchor: .top) }
+        }
+        }
+        .onChange(of: store.demoDetail) { id in
+            detail = id.flatMap { id in store.mods.first { $0.id == id } }
         }
         .scrollDismissesKeyboard(.interactively)
         .refreshable { await store.loadMods() }
@@ -46,7 +56,7 @@ struct ModsView: View {
             }
         }
         .animation(.easeOut(duration: 0.2), value: store.pickedInOrder.isEmpty)
-        .sheet(item: $detail) { mod in
+        .sheet(item: $detail, onDismiss: { store.demoDetail = nil }) { mod in
             ModDetail(mod: mod).environmentObject(store)
         }
         .sheet(isPresented: $confirming) {
@@ -81,6 +91,7 @@ struct ModsView: View {
                     ModRow(mod: mod, picked: store.picked.contains(mod.id),
                            toggle: { withAnimation(.easeOut(duration: 0.15)) { store.toggle(mod) } },
                            open: { detail = mod })
+                        .id(mod.id)
                 }
             }
         }

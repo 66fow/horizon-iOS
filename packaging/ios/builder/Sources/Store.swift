@@ -12,6 +12,9 @@ final class Store: ObservableObject {
     static let registry = URL(string: "https://horizon-rust.github.io/horizon-mods/index.json")!
 
     @Published var tab: AppTab = .mods
+    /// The recorded tour (Demo.swift): a mod row to scroll to, a mod page to open.
+    @Published var demoScroll: String?
+    @Published var demoDetail: String?
     /// Instances run inside LiveContainer (one app slot for all of them) instead of as apps of their own.
     @Published var useLiveContainer: Bool {
         didSet { UserDefaults.standard.set(useLiveContainer, forKey: "useLiveContainer") }

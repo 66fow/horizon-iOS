@@ -38,6 +38,7 @@ struct RootView: View {
             }
         }
         .task { await store.loadMods() }
+        .task { await Demo.start(store) }
         // Builds are checked while the app is open: often while one runs, rarely otherwise.
         .task(id: phase) {
             guard phase == .active else { return }

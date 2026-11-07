@@ -1,0 +1,94 @@
+# Photos and a video of Horizon Mods in an iPhone simulator, for sharing (a TikTok, a post):
+# full-resolution stills of each tab and of a mod's page, and the scripted tour (Demo.swift)
+# recorded, also cut to 1080x1920. Published as the pre-release ios-mods-media-r<N>.
+name: iOS Horizon Mods media
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  media:
+    runs-on: macos-15-intel
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build for the simulator
+        run: |
+          app=sim/HorizonMods.app
+          mkdir -p "$app"
+          xcrun --sdk iphonesimulator swiftc -target x86_64-apple-ios16.0-simulator -parse-as-library -O \
+            -o "$app/HorizonMods" packaging/ios/builder/Sources/*.swift
+          sed -e "s/@VERSION@/1.0.0/g" -e "s#@REPO@#$GITHUB_REPOSITORY#g" packaging/ios/builder/Info.plist > "$app/Info.plist"
+          cp packaging/ios/builder/Resources/* "$app/"
+          sips -z 120 120 packaging/ios/builder/icon.png --out "$app/AppIcon60x60@2x.png" >/dev/null
+          sips -z 180 180 packaging/ios/builder/icon.png --out "$app/AppIcon60x60@3x.png" >/dev/null
+          codesign --force --sign - "$app"
+      - name: Boot an iPhone
+        id: sim
+        run: |
+          udid=$(xcrun simctl list devices available -j | python3 -c '
+          import json,sys
+          d=json.load(sys.stdin)["devices"]
+          phones=[x for v in d.values() for x in v if x["name"].startswith("iPhone")]
+          pro=[x for x in phones if "Pro" in x["name"] and "Max" not in x["name"]]
+          print((pro or phones)[-1]["udid"])')
+          xcrun simctl boot "$udid"
+          xcrun simctl bootstatus "$udid" -b
+          xcrun simctl ui "$udid" appearance dark
+          xcrun simctl status_bar "$udid" override --time 9:41 --batteryState charged --batteryLevel 100 \
+            --wifiBars 3 --cellularMode active --cellularBars 4 --dataNetwork 5g
+          xcrun simctl install "$udid" sim/HorizonMods.app
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+      - name: Photos
+        env:
+          UDID: ${{ steps.sim.outputs.udid }}
+        run: |
+          mkdir -p media
+          shot() {
+            xcrun simctl terminate "$UDID" dev.horizon.mods || true
+            xcrun simctl launch "$UDID" dev.horizon.mods "${@:2}"
+            sleep 14
+            xcrun simctl io "$UDID" screenshot "media/$1.png"
+          }
+          shot 1-mods -HorizonTab mods
+          shot 2-mod-page -HorizonDetail auto
+          shot 3-create -HorizonTab create
+          shot 4-builds -HorizonTab builds
+          shot 5-play -HorizonTab instances
+          shot 6-settings -HorizonTab settings
+      - name: Video
+        env:
+          UDID: ${{ steps.sim.outputs.udid }}
+        run: |
+          xcrun simctl terminate "$UDID" dev.horizon.mods || true
+          # Data from an earlier launch makes the tour start straight away.
+          xcrun simctl io "$UDID" recordVideo --codec=h264 --force media/tour-raw.mov &
+          rec=$!
+          sleep 2
+          xcrun simctl launch "$UDID" dev.horizon.mods -HorizonDemo YES -HorizonTab mods
+          sleep 52
+          kill -INT "$rec"
+          wait "$rec" || true
+          ls -la media
+      - name: Cut it for TikTok (1080x1920)
+        run: |
+          brew install ffmpeg >/dev/null
+          ffmpeg -hide_banner -loglevel error -i media/tour-raw.mov \
+            -vf "fps=30,scale=-2:1920:flags=lanczos,pad=1080:1920:(ow-iw)/2:0:color=0x0a0919" \
+            -c:v libx264 -preset veryfast -crf 18 -pix_fmt yuv420p -movflags +faststart -an media/tour-tiktok-1080x1920.mp4
+          ffmpeg -hide_banner -loglevel error -i media/tour-raw.mov -vf "fps=30,scale=trunc(iw/2)*2:trunc(ih/2)*2" \
+            -c:v libx264 -preset veryfast -crf 18 -pix_fmt yuv420p -movflags +faststart -an media/tour-full.mp4
+          rm media/tour-raw.mov
+          ls -la media
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "ios-mods-media-r$GITHUB_RUN_NUMBER" media/* --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" --prerelease --title "Horizon Mods photos and video ($GITHUB_RUN_NUMBER)" \
+            --notes "Photos and a screen recording of Horizon Mods in an iPhone simulator, for sharing."
