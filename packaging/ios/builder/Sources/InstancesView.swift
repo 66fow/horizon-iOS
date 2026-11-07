@@ -134,9 +134,11 @@ struct InstancesView: View {
                         Button("Pick mods") { store.tab = .mods }.buttonStyle(QuietButton())
                     }
                 }
-                Text("An instance keeps its own worlds and settings, so copy the game files into its folder in the Files app the first time, as for Horizon. A free Apple ID can keep 3 sideloaded apps at once.")
-                    .font(.geist(12))
-                    .foregroundStyle(Theme.ink(0.55))
+                Plate {
+                    Text("An instance keeps its own worlds and settings, so copy the game files into its folder in the Files app the first time, as for Horizon. A free Apple ID can keep 3 sideloaded apps at once.")
+                        .font(.geist(13))
+                        .foregroundStyle(Theme.ink(0.7))
+                }
                 if !store.hidden.isEmpty {
                     Button("Show removed instances (\(store.hidden.count))") { store.hidden = [] }
                         .buttonStyle(QuietButton())

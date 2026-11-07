@@ -196,7 +196,10 @@ struct InstallButtons: View {
                 .foregroundStyle(copied ? Theme.live : Theme.ink(0.9))
                 .background(RoundedRectangle(cornerRadius: Theme.Radius.large, style: .continuous).fill(Theme.fill(0.08)))
             }
-            Text("\(asset.name) · \(ByteCountFormatter.string(fromByteCount: Int64(asset.size), countStyle: .file)). Install it over Horizon: your worlds and game files stay.")
+            Text("\(asset.name) · \(ByteCountFormatter.string(fromByteCount: Int64(asset.size), countStyle: .file)). "
+                 + (asset.name.range(of: #"-i[0-9]+\.ipa$"#, options: .regularExpression) != nil
+                    ? "It installs as its own app, beside Horizon."
+                    : "Install it over Horizon: your worlds and game files stay."))
                 .font(.geist(12))
                 .foregroundStyle(Theme.ink(0.55))
         }
