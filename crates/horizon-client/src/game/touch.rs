@@ -88,15 +88,15 @@ impl Game<'_> {
         }
     }
 
-    /// The Esc button: always top left in the safe area while in a world, as
-    /// the keyboard's Escape. Playing, it opens the pause menu (where Save
-    /// and Quit leaves the world); over a menu (an inventory, a crafting
-    /// table, chat) it closes it, which a touch screen has no key for. Not
-    /// while the layout editor is open (its Done closes it).
+    /// The Esc button: always top left in the safe area, on every screen, as
+    /// the keyboard's Escape (a touch screen has no key for it). Playing, it
+    /// opens the pause menu (where Save and Quit leaves the world); over a
+    /// menu (an inventory, a crafting table, chat, the options, a world list)
+    /// it closes it or goes back. Not while the layout editor or the mods
+    /// screen is open (their Done and Close close them).
     fn touch_close_button(&self, batch: &HudBatch) -> Option<Area> {
         if !TOUCH_CONTROLS
-            || self.player.is_none()
-            || self.title.is_some()
+            || self.pad.mod_browser.is_some()
             || (self.pad.touch.editing() && !self.pad_in_menu())
         {
             return None;
