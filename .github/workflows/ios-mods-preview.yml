@@ -35,7 +35,7 @@ jobs:
           xcrun simctl bootstatus "$udid" -b
           xcrun simctl install "$udid" sim/HorizonMods.app
           mkdir shots
-          for tab in mods builds instances settings; do
+          for tab in mods create builds instances settings; do
             xcrun simctl terminate "$udid" dev.horizon.mods || true
             xcrun simctl launch "$udid" dev.horizon.mods -HorizonTab "$tab"
             sleep 12

@@ -3,11 +3,13 @@ import SwiftUI
 @main
 struct HorizonModsApp: App {
     @StateObject private var store = Store()
+    @StateObject private var maker = Maker()
 
     var body: some Scene {
         WindowGroup {
             RootView()
                 .environmentObject(store)
+                .environmentObject(maker)
                 .tint(Theme.accentSoft)
                 .preferredColorScheme(.dark)
         }
@@ -16,6 +18,7 @@ struct HorizonModsApp: App {
 
 struct RootView: View {
     @EnvironmentObject var store: Store
+    @EnvironmentObject var maker: Maker
     @Environment(\.scenePhase) private var phase
 
     var body: some View {
@@ -24,6 +27,7 @@ struct RootView: View {
             Group {
                 switch store.tab {
                 case .mods: ModsView()
+                case .create: CreateView()
                 case .builds: BuildsView()
                 case .instances: InstancesView()
                 case .settings: SettingsView()
@@ -39,7 +43,8 @@ struct RootView: View {
             guard phase == .active else { return }
             while !Task.isCancelled {
                 await store.refreshRuns()
-                let seconds: UInt64 = store.activeCount > 0 ? 15 : 90
+                if maker.checking { await maker.poll(gitHub: store.gitHubClient) }
+                let seconds: UInt64 = store.activeCount > 0 || maker.checking ? 15 : 90
                 try? await Task.sleep(nanoseconds: seconds * 1_000_000_000)
             }
         }
@@ -54,6 +59,7 @@ struct TabBar: View {
     var body: some View {
         HStack(spacing: 4) {
             item(.mods, icon: "puzzle", label: "Mods")
+            item(.create, icon: "pencil-edit-02", label: "Create")
             item(.builds, icon: "package-01", label: "Builds")
             item(.instances, icon: "game-controller-01", label: "Play")
             item(.settings, icon: "sliders-horizontal", label: "Settings")

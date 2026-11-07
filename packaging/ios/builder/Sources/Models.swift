@@ -73,6 +73,36 @@ struct NativeMod: Decodable, Identifiable {
         versions = ((try? c.decode([Lossy<ModVersion>].self, forKey: .versions)) ?? []).compactMap(\.value)
     }
 
+    /// Made by the player with the mod maker: its version.
+    var mine: String?
+
+    private init(mine id: String, version: String) {
+        self.id = id
+        kind = "native-mod"
+        name = id.split(separator: "_").map { $0.prefix(1).uppercased() + $0.dropFirst() }.joined(separator: " ")
+        summary = "Made with the mod maker."
+        description = ""
+        authors = []
+        license = ""
+        source = ""
+        downloads = 0
+        icon = nil
+        screenshots = []
+        versions = []
+        mine = version
+    }
+
+    /// A native mod of the player's own, from its release (`<!-- horizon-user-mod {…} -->`).
+    static func userMod(_ release: ReleaseEntry) -> NativeMod? {
+        guard release.tagName.hasPrefix("mod-"), let body = release.body,
+              let start = body.range(of: "<!-- horizon-user-mod "),
+              let end = body.range(of: " -->", range: start.upperBound..<body.endIndex),
+              let meta = (try? JSONSerialization.jsonObject(with: Data(body[start.upperBound..<end.lowerBound].utf8))) as? [String: Any],
+              meta["kind"] as? String == "native", let id = meta["id"] as? String, let version = meta["version"] as? String
+        else { return nil }
+        return NativeMod(mine: id, version: version)
+    }
+
     /// This mod with only its versions for `game`, or nil when it has none.
     func forGame(_ game: String) -> NativeMod? {
         var mod = self
@@ -83,6 +113,7 @@ struct NativeMod: Decodable, Identifiable {
     var latest: ModVersion? { versions.max { $0.published < $1.published } }
 
     var byline: String {
+        if let mine { return "Yours · v" + mine }
         var parts: [String] = []
         if !authors.isEmpty { parts.append("by " + authors.joined(separator: ", ")) }
         if let v = latest?.version { parts.append("v" + v) }

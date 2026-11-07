@@ -85,10 +85,12 @@ struct SettingsView: View {
                         .foregroundStyle(Theme.ink(0.55))
                 }
 
+                AIAccounts()
+
                 Plate("Make a token") {
                     StepRow(number: 1, text: "Open GitHub's token page below and sign in.")
                     StepRow(number: 2, text: "Name it “Horizon Mods”. Under Repository access choose Only select repositories, then \(store.repo.isEmpty ? "your fork" : store.repo).")
-                    StepRow(number: 3, text: "Under Permissions, Repository permissions, set Actions to Read and write.")
+                    StepRow(number: 3, text: "Under Permissions, Repository permissions, set Actions, Contents and Issues to Read and write. (To send mods to Horizon's registry, give it All repositories and Administration: Read and write too.)")
                     StepRow(number: 4, text: "Tap Generate token, copy it, come back here and tap Paste.")
                     Link(destination: URL(string: "https://github.com/settings/personal-access-tokens/new")!) {
                         HStack(spacing: 8) {

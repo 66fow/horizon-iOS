@@ -1,7 +1,7 @@
 import Foundation
 import SwiftUI
 
-enum AppTab: Hashable { case mods, builds, instances, settings }
+enum AppTab: Hashable { case mods, create, builds, instances, settings }
 
 /// Everything the app knows: the mod list, the picks, the token, and the builds on GitHub.
 @MainActor
@@ -26,7 +26,10 @@ final class Store: ObservableObject {
     @Published var token: String {
         didSet { TokenStore.save(token.trimmingCharacters(in: .whitespacesAndNewlines)) }
     }
-    @Published var mods: [NativeMod] = []
+    @Published var registryMods: [NativeMod] = []
+    /// The player's own native mods (the mod maker's, published by ios-user-mod.yml).
+    @Published var userMods: [NativeMod] = []
+    var mods: [NativeMod] { userMods + registryMods.filter { m in !userMods.contains { $0.id == m.id } } }
     @Published var modsError: String?
     @Published var loadingMods = false
     @Published var picked: Set<String> {
@@ -72,9 +75,12 @@ final class Store: ObservableObject {
         case "builds": tab = .builds
         case "instances": tab = .instances
         case "settings": tab = .settings
+        case "create": tab = .create
         default: break
         }
     }
+
+    var gitHubClient: GitHub { gitHub }
 
     private var gitHub: GitHub {
         GitHub(repo: repo.trimmingCharacters(in: .whitespaces),
@@ -135,7 +141,7 @@ final class Store: ObservableObject {
                 throw GitHubError(code: 0, message: "The mod list didn't load (error \(code)).", repo: repo)
             }
             let index = try JSONDecoder().decode(RegistryIndex.self, from: data)
-            mods = index.projects
+            registryMods = index.projects
                 .compactMap(\.value)
                 .filter { $0.kind == "native-mod" }
                 .compactMap { $0.forGame(Self.game) }
@@ -251,7 +257,13 @@ final class Store: ObservableObject {
     }
 
     func refreshInstances() async {
-        guard let releases: [ReleaseEntry] = try? await gitHub.get("/releases?per_page=60") else { return }
+        guard let releases: [ReleaseEntry] = try? await gitHub.get("/releases?per_page=100") else { return }
+        var mine: [String: (Date, NativeMod)] = [:]
+        for release in releases {
+            guard let mod = NativeMod.userMod(release), (mine[mod.id]?.0 ?? .distantPast) < release.createdAt else { continue }
+            mine[mod.id] = (release.createdAt, mod)
+        }
+        userMods = mine.values.map(\.1).sorted { $0.name < $1.name }
         var newest: [String: Instance] = [:]
         for instance in releases.compactMap(Instance.of) where (newest[instance.id]?.build ?? -1) < instance.build {
             newest[instance.id] = instance

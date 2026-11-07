@@ -15,7 +15,7 @@ struct GitHubError: LocalizedError {
         case 403 where message.localizedCaseInsensitiveContains("rate limit"):
             return "GitHub's limit for requests without a token was reached. Add a token in Settings."
         case 403:
-            return "The token can't do that. It needs Actions: Read and write on \(repo)."
+            return "The token can't do that on \(repo): in Settings, check it has Actions, Contents and Issues set to Read and write."
         case 404:
             return "\(repo) wasn't found. Check the repository in Settings, and that the token can see it."
         case 422:
@@ -42,10 +42,24 @@ struct GitHub {
 
     @discardableResult
     func data(_ path: String, method: String = "GET", json: [String: Any]? = nil) async throws -> Data {
-        guard !repo.isEmpty, let url = URL(string: "https://api.github.com/repos/\(repo)\(path)") else {
+        guard !repo.isEmpty else {
             throw GitHubError(code: 0, message: "Set the repository in Settings.", repo: repo)
         }
+        return try await call("https://api.github.com/repos/\(repo)\(path)", method: method, json: json)
+    }
+
+    /// Any GitHub address (`api.github.com`, `uploads.github.com`), with the token.
+    @discardableResult
+    func call(_ address: String, method: String = "GET", json: [String: Any]? = nil,
+              body: Data? = nil, contentType: String? = nil) async throws -> Data {
+        guard let url = URL(string: address) else {
+            throw GitHubError(code: 0, message: "Bad address \(address)", repo: repo)
+        }
         var request = URLRequest(url: url)
+        if let body {
+            request.httpBody = body
+            request.setValue(contentType ?? "application/octet-stream", forHTTPHeaderField: "Content-Type")
+        }
         request.httpMethod = method
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
@@ -66,6 +80,12 @@ struct GitHub {
 
     func get<T: Decodable>(_ path: String) async throws -> T {
         try Self.decoder.decode(T.self, from: try await data(path))
+    }
+
+    /// `data`'s JSON object.
+    func object(_ path: String, method: String = "GET", json: [String: Any]? = nil) async throws -> [String: Any] {
+        let data = try await data(path, method: method, json: json)
+        return (try JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
     }
 }
 
