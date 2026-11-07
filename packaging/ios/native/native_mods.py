@@ -3,7 +3,9 @@
 
     native_mods.py checklist INDEX BODY_IN BODY_OUT   # the issue body: every native mod, ticks kept
     native_mods.py picked BODY                         # the ticked mod ids, one per line
-    native_mods.py fetch INDEX OUT ID...               # download, check and unpack each into OUT/<id>/
+    native_mods.py fetch INDEX OUT ID... [--user RELEASES]  # download, check and unpack each into OUT/<id>/;
+                                                       # ids not in the registry come from the fork's own
+                                                       # mod-<id>-v<version> releases (the mod maker's)
 
 INDEX is the registry's index.json (https://horizon-rust.github.io/horizon-mods/index.json). Only
 the registry's own files are downloaded (GitHub release assets over https), each checked against its
@@ -60,17 +62,44 @@ def checklist(index: dict, old: str) -> str:
     return "\n".join(lines) + "\n"
 
 
-def fetch(index: dict, out: pathlib.Path, ids: list[str]) -> dict:
+USER_MARK = re.compile(r"<!-- horizon-user-mod (\{.*?\}) -->")
+
+
+def user_mods(releases: list[dict]) -> dict[str, dict]:
+    """The fork's own native mods (ios-user-mod.yml's releases), newest release of each id:
+    {id: {"version", "url", "size", "sha256"}}."""
+    out: dict[str, dict] = {}
+    for r in sorted(releases, key=lambda r: r.get("created_at", "")):
+        m = USER_MARK.search(r.get("body") or "")
+        if not r.get("tag_name", "").startswith("mod-") or not m:
+            continue
+        meta = json.loads(m.group(1))
+        if meta.get("kind") != "native":
+            continue
+        asset = next((a for a in r.get("assets", []) if a["name"] == f"{meta['id']}.hnmod"), None)
+        if asset:
+            out[meta["id"]] = {"version": meta["version"], "url": asset["browser_download_url"],
+                               "size": meta["size"], "sha256": meta["sha256"], "name": meta["id"]}
+    return out
+
+
+def fetch(index: dict, out: pathlib.Path, ids: list[str], user: dict[str, dict] | None = None) -> dict:
     by_id = {p["id"]: p for p in native(index)}
+    user = user or {}
     report = {"fetched": [], "missing": []}
     for mod in ids:
         p = by_id.get(mod)
-        if p is None:
-            report["missing"].append({"id": mod, "why": "not a native mod for 26.3 in the registry"})
+        if p is not None:
+            v = p["versions"][0]
+            f = v["file"]
+            url, size, sha = f["url"], int(f["size"]), f["sha256"]
+            name, version = p["name"], v["version"]
+        elif mod in user:
+            u = user[mod]
+            url, size, sha, name, version = u["url"], int(u["size"]), u["sha256"], u["name"], u["version"]
+        else:
+            report["missing"].append({"id": mod, "why": "not a native mod for 26.3 in the registry or this fork"})
             continue
-        v = p["versions"][0]
-        f = v["file"]
-        url, size, sha = f["url"], int(f["size"]), f["sha256"]
         if not url.startswith("https://github.com/") or "/releases/download/" not in url or size > MAX_FILE:
             report["missing"].append({"id": mod, "why": f"unexpected file {url} ({size} bytes)"})
             continue
@@ -91,7 +120,7 @@ def fetch(index: dict, out: pathlib.Path, ids: list[str]) -> dict:
                     raise SystemExit(f"{mod}: {name} would land outside its folder")
             z.extractall(dest)
         archive.unlink()
-        report["fetched"].append({"id": mod, "version": v["version"], "name": p["name"]})
+        report["fetched"].append({"id": mod, "version": version, "name": name})
     return report
 
 
@@ -104,10 +133,15 @@ def main() -> None:
     elif cmd == "picked":
         print("\n".join(picked(pathlib.Path(args[0]).read_text())))
     elif cmd == "fetch":
+        user = None
+        if "--user" in args:
+            at = args.index("--user")
+            user = user_mods(json.loads(pathlib.Path(args[at + 1]).read_text()))
+            args = args[:at] + args[at + 2:]
         index = json.loads(pathlib.Path(args[0]).read_text())
         out = pathlib.Path(args[1])
         out.mkdir(parents=True, exist_ok=True)
-        print(json.dumps(fetch(index, out, args[2:]), indent=1))
+        print(json.dumps(fetch(index, out, args[2:], user), indent=1))
     else:
         raise SystemExit(__doc__)
 

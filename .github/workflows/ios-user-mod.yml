@@ -1,0 +1,151 @@
+# Checks and publishes a mod made in Horizon Mods' mod maker (packaging/ios/mod-maker.md).
+# The mod's files are on this fork's `user-mods` branch, in `user-mods/<id>/`:
+# - a content mod (`horizon-mod.toml`, `assets/`, `data/`) is packed and checked with
+#   `cargo horizon-mod build` and `check`, the registry's own checks, into `<id>.hmod`;
+# - a native mod (`mixins/<id>/horizon-mixin.toml` and its `api` crate) gets its
+#   `horizon-native.json`, is staged onto the ios-build branch's source by the launcher, and the
+#   game is type-checked with it, into `<id>.hnmod`.
+# What passes is published as the pre-release `mod-<id>-v<version>`, which Horizon's My mods tab
+# and the native builds read. What fails shows its errors in the log, which the mod maker reads
+# back to the AI to fix.
+name: iOS user mod
+
+on:
+  workflow_dispatch:
+    inputs:
+      id:
+        description: "The mod's id (its folder in user-mods/ on the user-mods branch)"
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: user-mod-${{ inputs.id }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ios-build
+          path: horizon
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: user-mods
+          path: user
+          persist-credentials: false
+      - name: What the mod is
+        id: mod
+        env:
+          ID: ${{ inputs.id }}
+        run: |
+          [[ "$ID" =~ ^[a-z0-9_]{1,64}$ ]] || { echo "::error::$ID is not a mod id ([a-z0-9_], 64 at most)"; exit 1; }
+          dir="$PWD/user/user-mods/$ID"
+          if [ -f "$dir/horizon-mod.toml" ]; then
+            kind=content
+            version=$(sed -n 's/^version *= *"\(.*\)"/\1/p' "$dir/horizon-mod.toml" | head -1)
+          elif [ -f "$dir/mixins/$ID/horizon-mixin.toml" ]; then
+            kind=native
+            version=$(sed -n 's/^version *= *"\(.*\)"/\1/p' "$dir/mixins/$ID/horizon-mixin.toml" | head -1)
+          else
+            echo "::error::user-mods/$ID has neither horizon-mod.toml (a content mod) nor mixins/$ID/horizon-mixin.toml (a native mod)"
+            exit 1
+          fi
+          [[ "$version" =~ ^[0-9A-Za-z.+-]{1,32}$ ]] || { echo "::error::the mod's version \"$version\" isn't a plain version like 0.1.0"; exit 1; }
+          if find "$dir" -type l | grep -q .; then echo "::error::the mod has links in it"; exit 1; fi
+          echo "dir=$dir" >> "$GITHUB_OUTPUT"
+          echo "kind=$kind" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "A $kind mod, version $version"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            horizon
+            horizon/launcher
+            staged
+          key: user-mod-${{ steps.mod.outputs.kind }}
+
+      - name: Build and check the content mod
+        if: steps.mod.outputs.kind == 'content'
+        env:
+          DIR: ${{ steps.mod.outputs.dir }}
+          ID: ${{ inputs.id }}
+        run: |
+          cargo install --locked --path horizon/crates/cargo-horizon-mod --root "$RUNNER_TEMP/chm"
+          export PATH="$RUNNER_TEMP/chm/bin:$PATH"
+          cd "$DIR"
+          cargo horizon-mod build
+          cargo horizon-mod check "target/horizon-mod/$ID.hmod"
+          mkdir -p "$GITHUB_WORKSPACE/out"
+          cp "target/horizon-mod/$ID.hmod" "$GITHUB_WORKSPACE/out/$ID.hmod"
+
+      - name: Linux libraries the launcher and the game link
+        if: steps.mod.outputs.kind == 'native'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev \
+            libfontconfig-dev libvulkan-dev libasound2-dev libudev-dev zip
+      - name: Pack, stage and type-check the native mod
+        if: steps.mod.outputs.kind == 'native'
+        env:
+          DIR: ${{ steps.mod.outputs.dir }}
+          ID: ${{ inputs.id }}
+          VERSION: ${{ steps.mod.outputs.version }}
+          HORIZON_LAUNCHER_HOME: ${{ runner.temp }}/launcher-home
+          HORIZON_LAUNCHER_NO_SELF_UPDATE: "1"
+        run: |
+          revision=$(git -C horizon rev-parse HEAD)
+          mixins=$(git ls-remote https://github.com/horizon-rust/horizon-mixins HEAD | cut -f1)
+          # The .hnmod: its manifest and the bundle, nothing else (docs/api/mod-files.md).
+          pack="$RUNNER_TEMP/pack/$ID"
+          mkdir -p "$pack"
+          cp -R "$DIR/mixins" "$pack/"
+          R=$revision M=$mixins python3 -c 'import json,os; print(json.dumps({"schema": 1, "id": os.environ["ID"], "version": os.environ["VERSION"], "game": "26.3", "horizon": os.environ["R"], "mixins": os.environ["M"]}, indent=1))' \
+            > "$pack/horizon-native.json"
+          mkdir -p out
+          (cd "$pack" && zip -qr "$GITHUB_WORKSPACE/out/$ID.hnmod" horizon-native.json mixins)
+          cargo build --release --locked --manifest-path horizon/launcher/Cargo.toml --bin horizon-launcher
+          echo "$revision" > horizon/.horizon-revision
+          find horizon -type l -delete
+          rm -rf horizon/.git
+          mkdir -p mods
+          cp -R "$pack" mods/
+          if ! horizon/launcher/target/release/horizon-launcher native-stage "$PWD/mods" \
+            --source "$PWD/horizon" --revision "$revision" --out "$PWD/staged" --rust "$HOME/.cargo" \
+            --trust-native-code > staged.json; then
+            cat staged.json
+            echo "::error::the mod doesn't apply to Horizon's source"
+            tail -n 120 "$HORIZON_LAUNCHER_HOME/native/build.log" || true
+            exit 1
+          fi
+          package=$(python3 -c 'import json;print(json.load(open("staged.json"))["package"])')
+          features=$(python3 -c 'import json;print("--features horizon-client/mods" if json.load(open("staged.json"))["mods_feature"] else "")')
+          cd staged
+          # The game with the mod in it, type-checked (an iPhone build compiles the same code on a Mac).
+          cargo check --locked -p "$package" --bin horizon-client --no-default-features $features --message-format short
+      - name: Publish it
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ID: ${{ inputs.id }}
+          KIND: ${{ steps.mod.outputs.kind }}
+          VERSION: ${{ steps.mod.outputs.version }}
+          DIR: ${{ steps.mod.outputs.dir }}
+        run: |
+          tag="mod-$ID-v$VERSION"
+          file=out/$ID.$([ "$KIND" = content ] && echo hmod || echo hnmod)
+          source=$(git -C user rev-parse HEAD)
+          {
+            echo "A $KIND mod made with Horizon Mods' mod maker: \`$ID\` $VERSION, from [user-mods/$ID]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/tree/$source/user-mods/$ID)."
+            echo
+            python3 -c 'import hashlib,json,os,sys; d=open(sys.argv[1],"rb").read(); print("<!-- horizon-user-mod " + json.dumps({"id": os.environ["ID"], "kind": os.environ["KIND"], "version": os.environ["VERSION"], "sha256": hashlib.sha256(d).hexdigest(), "size": len(d), "source": sys.argv[2]}) + " -->")' "$file" "$source"
+          } > notes.md
+          gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --cleanup-tag -y 2>/dev/null || true
+          gh release create "$tag" "$file" --repo "$GITHUB_REPOSITORY" --target ios-build --prerelease \
+            --title "Mod: $ID $VERSION" --notes-file notes.md
+          echo "Published $tag"
