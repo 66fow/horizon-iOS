@@ -528,8 +528,8 @@ final class Maker: ObservableObject {
                 // The answer may still be on its way if the run just finished; one more look first.
                 if let file = try? await gitHub.object("/contents/\(folder)\(turn)-answer.md?ref=user-mods"), file["content"] != nil { continue }
                 let log = await Self.errors(run: run, gitHub: gitHub)
-                let reason = log.split(separator: "\n").first { $0.contains("::error::") || $0.lowercased().contains("error") }
-                throw AIError(message: "Copilot couldn't answer on GitHub. " + (reason.map { String($0).replacingOccurrences(of: "##[error]", with: "") } ?? log.prefix(300).description))
+                let reason = log.split(separator: "\n").first { $0.contains("##[error]") && !$0.contains("Process completed with exit code") }
+                throw AIError(message: "Copilot couldn't answer on GitHub. " + (reason.map { String($0).replacingOccurrences(of: "##[error]", with: "") } ?? String(log.prefix(300))))
             }
         }
         throw AIError(message: "Copilot didn't answer within 30 minutes.")
@@ -675,7 +675,8 @@ final class Maker: ObservableObject {
         }
         var keep = [String]()
         var after = 0
-        for line in lines {
+        // The step's own script, echoed in cyan before it runs, isn't what went wrong.
+        for line in lines where !line.contains("\u{1b}[36;1m") && !line.hasPrefix("##[group]") && !line.hasPrefix("##[endgroup]") {
             let lower = line.lowercased()
             if lower.contains("error") || line.contains("-->") || lower.contains("refused") || lower.contains("::error::") {
                 keep.append(line)
