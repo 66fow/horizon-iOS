@@ -122,6 +122,7 @@ pub trait Clipboard {
 /// iOS has no arboard backend: the system clipboard is UIKit's general
 /// pasteboard (`UIPasteboard.generalPasteboard.string`), in arboard's shape.
 #[cfg(target_os = "ios")]
+#[allow(unsafe_code)]
 mod arboard {
     use objc2::rc::Retained;
     use objc2::runtime::AnyObject;
