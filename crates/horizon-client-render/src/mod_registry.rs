@@ -38,10 +38,18 @@ pub enum Tab {
     Native,
     ResourcePacks,
     Shaders,
+    /// The player's own mods, made with Horizon Mods' mod maker ([`UserMod`]).
+    Mine,
 }
 
 impl Tab {
-    pub const ALL: [Tab; 4] = [Tab::Mods, Tab::Native, Tab::ResourcePacks, Tab::Shaders];
+    pub const ALL: [Tab; 5] = [
+        Tab::Mods,
+        Tab::Native,
+        Tab::ResourcePacks,
+        Tab::Shaders,
+        Tab::Mine,
+    ];
 
     /// The translation key of its name.
     pub fn label(self) -> &'static str {
@@ -50,6 +58,7 @@ impl Tab {
             Tab::Native => "horizon.mods.tab.native",
             Tab::ResourcePacks => "horizon.mods.tab.resourcepacks",
             Tab::Shaders => "horizon.mods.tab.shaders",
+            Tab::Mine => "horizon.mods.tab.mine",
         }
     }
 
@@ -59,6 +68,7 @@ impl Tab {
             Tab::Native => *kind == Kind::NativeMod,
             Tab::ResourcePacks => *kind == Kind::ResourcePack,
             Tab::Shaders => matches!(kind, Kind::Shader | Kind::ShaderPack),
+            Tab::Mine => false,
         }
     }
 }
@@ -175,9 +185,131 @@ pub fn with_ticks(body: &str, ticks: &std::collections::BTreeSet<String>, build:
     out
 }
 
+/// A mod of the player's own: one the fork's `ios-user-mod.yml` checked and published as the
+/// release `mod-<id>-v<version>` (packaging/ios/mod-maker.md).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UserMod {
+    pub id: String,
+    /// `content` (an `.hmod`, installed here) or `native` (built into the game on GitHub).
+    pub native: bool,
+    pub version: String,
+    pub url: String,
+    pub sha256: String,
+    pub size: u64,
+}
+
+impl UserMod {
+    /// Where an installed content mod is.
+    pub fn file(&self, game_dir: &Path) -> PathBuf {
+        game_dir
+            .join("horizon-mods")
+            .join(format!("{}.hmod", self.id))
+    }
+
+    /// Its newest version is installed: the file is there at its size.
+    pub fn installed(&self, game_dir: &Path) -> bool {
+        std::fs::metadata(self.file(game_dir)).is_ok_and(|m| m.len() == self.size)
+    }
+}
+
+const USER_MARK: &str = "<!-- horizon-user-mod ";
+
+/// The player's own mods in a GitHub releases listing (JSON), the newest release of each id.
+pub fn user_mods(releases: &str) -> Vec<UserMod> {
+    let Ok(list) = serde_json::from_str::<Vec<serde_json::Value>>(releases) else {
+        return Vec::new();
+    };
+    let mut newest: std::collections::BTreeMap<String, (String, UserMod)> = Default::default();
+    for r in &list {
+        let (Some(tag), Some(body)) = (r["tag_name"].as_str(), r["body"].as_str()) else {
+            continue;
+        };
+        let Some(meta) = body
+            .split_once(USER_MARK)
+            .and_then(|(_, rest)| rest.split_once(" -->"))
+            .and_then(|(json, _)| serde_json::from_str::<serde_json::Value>(json).ok())
+        else {
+            continue;
+        };
+        let (Some(id), Some(kind), Some(version), Some(sha256), Some(size)) = (
+            meta["id"].as_str(),
+            meta["kind"].as_str(),
+            meta["version"].as_str(),
+            meta["sha256"].as_str(),
+            meta["size"].as_u64(),
+        ) else {
+            continue;
+        };
+        let file = format!("{id}.{}", if kind == "native" { "hnmod" } else { "hmod" });
+        let Some(url) = r["assets"].as_array().and_then(|a| {
+            a.iter()
+                .find(|a| a["name"] == file.as_str())
+                .and_then(|a| a["browser_download_url"].as_str())
+        }) else {
+            continue;
+        };
+        if !tag.starts_with("mod-") || !safe_name(&file) || !url.starts_with("https://") {
+            continue;
+        }
+        let created = r["created_at"].as_str().unwrap_or("").to_owned();
+        if newest.get(id).is_some_and(|(at, _)| *at >= created) {
+            continue;
+        }
+        newest.insert(
+            id.to_owned(),
+            (
+                created,
+                UserMod {
+                    id: id.to_owned(),
+                    native: kind == "native",
+                    version: version.to_owned(),
+                    url: url.to_owned(),
+                    sha256: sha256.to_lowercase(),
+                    size,
+                },
+            ),
+        );
+    }
+    newest.into_values().map(|(_, m)| m).collect()
+}
+
+/// Download a content mod of the player's own, check its size and SHA-256 against its release,
+/// and put it in `horizon-mods/`, turned on.
+fn install_mine(
+    m: &UserMod,
+    game_dir: &Path,
+    progress: impl Fn(u64, u64),
+) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    if m.native {
+        return Err(format!("{} is a native mod: build it into Horizon", m.id));
+    }
+    let bytes = get(&m.url, m.size.min(MAX_FILE_BYTES), &progress)?;
+    let sha: String = Sha256::digest(&bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    if bytes.len() as u64 != m.size || sha != m.sha256 {
+        return Err(format!("{}'s file isn't the one GitHub checked", m.id));
+    }
+    let to = m.file(game_dir);
+    std::fs::create_dir_all(to.parent().expect("a file in horizon-mods"))
+        .map_err(|e| e.to_string())?;
+    let partial = to.with_extension("hmod.part");
+    std::fs::write(&partial, &bytes).map_err(|e| e.to_string())?;
+    std::fs::rename(&partial, &to).map_err(|e| e.to_string())?;
+    let mut list = crate::mod_list::ModList::load(game_dir);
+    list.enabled.insert(m.id.clone());
+    list.save(game_dir);
+    log::info!("Horizon: installed my mod {} {}", m.id, m.version);
+    Ok(format!("{}.hmod", m.id))
+}
+
 /// What the worker reports.
 #[derive(Debug)]
 pub enum Message {
+    /// The player's own mods, from the fork's releases.
+    Mine(Result<Vec<UserMod>, String>),
     /// The checklist issue: its number and body.
     Issue(Result<(u64, String), String>),
     /// The checklist was saved (with Build now ticked: a build started).
@@ -244,6 +376,44 @@ impl Registry {
                 let message = match install(&index, &id, &game_dir, progress) {
                     Ok(file) => Message::Installed { id, file },
                     Err(error) => Message::Failed { id, error },
+                };
+                let _ = tx.send(message);
+            })
+            .ok();
+    }
+
+    /// Read the player's own mods from `repo`'s releases (public: no token).
+    pub fn fetch_mine(&self, repo: String) {
+        let tx = self.tx.clone();
+        std::thread::Builder::new()
+            .name("my mods".into())
+            .spawn(move || {
+                let url = format!("https://api.github.com/repos/{repo}/releases?per_page=100");
+                let mine = get(&url, MAX_INDEX_BYTES, |_, _| {})
+                    .and_then(|bytes| String::from_utf8(bytes).map_err(|e| e.to_string()))
+                    .map(|text| user_mods(&text));
+                let _ = tx.send(Message::Mine(mine));
+            })
+            .ok();
+    }
+
+    /// Download and install the player's own content mod `m` into `game_dir`.
+    pub fn install_mine(&self, m: UserMod, game_dir: PathBuf) {
+        let tx = self.tx.clone();
+        std::thread::Builder::new()
+            .name("my mod download".into())
+            .spawn(move || {
+                let id = m.id.clone();
+                let progress = |done, total| {
+                    let _ = tx.send(Message::Progress {
+                        id: id.clone(),
+                        done,
+                        total,
+                    });
+                };
+                let message = match install_mine(&m, &game_dir, progress) {
+                    Ok(file) => Message::Installed { id: m.id, file },
+                    Err(error) => Message::Failed { id: m.id, error },
                 };
                 let _ = tx.send(message);
             })
@@ -486,6 +656,57 @@ mod tests {
         for bad in ["", "../x.zip", "a/b.zip", ".hidden", "..", "a\\b"] {
             assert!(!safe_name(bad), "{bad:?}");
         }
+    }
+
+    #[test]
+    fn my_mods_are_the_newest_published_release_of_each() {
+        let release = |tag: &str, created: &str, meta: &str, asset: &str| {
+            serde_json::json!({
+                "tag_name": tag,
+                "created_at": created,
+                "body": format!("A mod.\n\n<!-- horizon-user-mod {meta} -->"),
+                "assets": [{"name": asset, "browser_download_url": format!("https://github.com/o/r/releases/download/{tag}/{asset}")}],
+            })
+        };
+        let list = serde_json::Value::Array(vec![
+            release(
+                "mod-gems-v0.1.0",
+                "2026-11-06T10:00:00Z",
+                r#"{"id": "gems", "kind": "content", "version": "0.1.0", "sha256": "AB", "size": 5}"#,
+                "gems.hmod",
+            ),
+            release(
+                "mod-gems-v0.2.0",
+                "2026-11-07T10:00:00Z",
+                r#"{"id": "gems", "kind": "content", "version": "0.2.0", "sha256": "CD", "size": 6}"#,
+                "gems.hmod",
+            ),
+            release(
+                "mod-hud-v1",
+                "2026-11-07T11:00:00Z",
+                r#"{"id": "hud", "kind": "native", "version": "1", "sha256": "ef", "size": 7}"#,
+                "hud.hnmod",
+            ),
+            // Not the mod maker's: no mark, or another file than its id's.
+            serde_json::json!({"tag_name": "ios-r22", "body": "Horizon", "assets": []}),
+            release(
+                "mod-odd-v1",
+                "2026-11-07T11:00:00Z",
+                r#"{"id": "odd", "kind": "content", "version": "1", "sha256": "00", "size": 1}"#,
+                "other.hmod",
+            ),
+        ]);
+        let mine = user_mods(&list.to_string());
+        assert_eq!(mine.len(), 2);
+        let gems = &mine[0];
+        assert_eq!(
+            (gems.id.as_str(), gems.version.as_str(), gems.native),
+            ("gems", "0.2.0", false)
+        );
+        assert_eq!(gems.sha256, "cd");
+        assert!(gems.url.ends_with("/mod-gems-v0.2.0/gems.hmod"));
+        assert!(mine[1].native);
+        assert!(user_mods("not json").is_empty());
     }
 
     #[test]

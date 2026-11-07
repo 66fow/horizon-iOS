@@ -8,7 +8,7 @@
 //! them (packaging/ios/native-mods.md). Touch only: it lives beside the touch
 //! controls (touch.rs).
 use super::*;
-use horizon_client::mod_registry::{self, Message, Offer, Registry, Tab};
+use horizon_client::mod_registry::{self, Message, Offer, Registry, Tab, UserMod};
 use horizon_client_input::touch::Area;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
@@ -47,6 +47,9 @@ pub(super) struct ModBrowser {
     /// Something was installed: say Horizon must restart.
     restart: bool,
     native: Native,
+    /// The player's own mods (the My mods tab), from the fork's releases.
+    mine: Option<std::result::Result<Vec<UserMod>, String>>,
+    mine_loading: bool,
 }
 
 /// The Native tab's link to the checklist issue.
@@ -102,6 +105,38 @@ impl ModBrowser {
                 token: load_token(),
                 ..Native::default()
             },
+            mine: None,
+            mine_loading: false,
+        }
+    }
+
+    /// The My mods tab needs the fork's releases: ask GitHub for them, once.
+    fn want_mine(&mut self) {
+        if self.tab != Tab::Mine || self.mine.is_some() {
+            return;
+        }
+        match mod_registry::IOS_REPO {
+            Some(repo) => {
+                self.mine = Some(Ok(Vec::new()));
+                self.mine_loading = true;
+                self.registry.fetch_mine(repo.to_owned());
+            }
+            None => self.mine = Some(Err(horizon_client::lang::get("horizon.mods.mine.no_repo"))),
+        }
+    }
+
+    /// How many rows the open tab has.
+    fn row_count(&self) -> usize {
+        if self.tab == Tab::Mine {
+            return self
+                .mine
+                .as_ref()
+                .and_then(|m| m.as_ref().ok())
+                .map_or(0, Vec::len);
+        }
+        match &self.index {
+            Some(Ok(index)) => mod_registry::entries(index, self.tab).len(),
+            _ => 0,
         }
     }
 
@@ -219,7 +254,8 @@ fn frame(safe: Area) -> Frame {
         h: BAR,
     };
     let tab_y = panel.y + GAP + BAR + GAP;
-    let tab_w = 80.0;
+    let count = Tab::ALL.len() as f32;
+    let tab_w = ((panel.w - GAP * (count + 1.0)) / count).clamp(48.0, 80.0);
     let tabs = Tab::ALL
         .iter()
         .enumerate()
@@ -337,9 +373,22 @@ impl Game<'_> {
                     browser.tab = *tab;
                     browser.scroll = 0.0;
                     browser.want_issue();
+                    browser.want_mine();
                     return true;
                 }
-                if matches!(browser.index, Some(Err(_))) && list.contains(at) {
+                if browser.tab == Tab::Mine
+                    && matches!(browser.mine, Some(Err(_)))
+                    && mod_registry::IOS_REPO.is_some()
+                    && list.contains(at)
+                {
+                    browser.mine = None;
+                    browser.want_mine();
+                    return true;
+                }
+                if browser.tab != Tab::Mine
+                    && matches!(browser.index, Some(Err(_)))
+                    && list.contains(at)
+                {
                     browser.index = None;
                     browser.registry.fetch_index();
                     return true;
@@ -356,10 +405,7 @@ impl Game<'_> {
                     *moved += (at.1 - *last).abs();
                     *last = at.1;
                 }
-                let rows = match &browser.index {
-                    Some(Ok(index)) => mod_registry::entries(index, browser.tab).len(),
-                    _ => 0,
-                };
+                let rows = browser.row_count();
                 let max = (rows as f32 * ROW - list.h).max(0.0);
                 browser.scroll = browser.scroll.clamp(0.0, max);
             }
@@ -371,6 +417,30 @@ impl Game<'_> {
                     return true;
                 }
                 // A tap on a row's button.
+                if browser.tab == Tab::Mine {
+                    let row = ((at.1 - list.y + browser.scroll) / ROW).floor();
+                    let Some(Ok(mine)) = &browser.mine else {
+                        return true;
+                    };
+                    if row < 0.0 {
+                        return true;
+                    }
+                    let Some(m) = mine.get(row as usize).cloned() else {
+                        return true;
+                    };
+                    let row_y = list.y + row * ROW - browser.scroll;
+                    let busy = matches!(browser.jobs.get(&m.id), Some(Job::Downloading(_)));
+                    if button(list, row_y).contains(at)
+                        && !m.native
+                        && !busy
+                        && !m.installed(&game_dir)
+                    {
+                        log::info!("Horizon: getting my mod {}", m.id);
+                        browser.jobs.insert(m.id.clone(), Job::Downloading(0.0));
+                        browser.registry.install_mine(m, game_dir);
+                    }
+                    return true;
+                }
                 let Some(Ok(index)) = browser.index.clone() else {
                     return true;
                 };
@@ -423,6 +493,13 @@ impl Game<'_> {
         };
         for message in browser.registry.poll() {
             match message {
+                Message::Mine(result) => {
+                    if let Err(e) = &result {
+                        log::warn!("Horizon: my mods: {e}");
+                    }
+                    browser.mine_loading = false;
+                    browser.mine = Some(result);
+                }
                 Message::Index(index) => {
                     if let Err(e) = &index {
                         log::warn!("Horizon: the mod registry: {e}");
@@ -538,6 +615,17 @@ impl Game<'_> {
             );
         }
         let list = f.list;
+        if browser.tab == Tab::Mine {
+            self.draw_mine(batch, browser, list);
+            let footer = if browser.restart {
+                horizon_client::lang::get("horizon.mods.restart")
+            } else {
+                horizon_client::lang::get("horizon.mods.footer")
+            };
+            let footer = fit(atlas, &footer, p.w - GAP * 4.0);
+            batch.text(atlas, &footer, p.x + GAP * 2.0, f.footer_y, DIM, false);
+            return;
+        }
         let status = match &browser.index {
             None => Some((horizon_client::lang::get("horizon.mods.loading"), DIM)),
             Some(Err(e)) => Some((
@@ -658,6 +746,107 @@ impl Game<'_> {
         };
         let footer = fit(atlas, &footer, p.w - GAP * 4.0);
         batch.text(atlas, &footer, p.x + GAP * 2.0, f.footer_y, DIM, false);
+    }
+}
+
+#[cfg_attr(not(target_os = "ios"), allow(dead_code))]
+impl Game<'_> {
+    /// The My mods tab: the player's own mods, content ones to get, native ones to build.
+    fn draw_mine(&self, batch: &mut HudBatch, browser: &ModBrowser, list: Area) {
+        let atlas = &self.gui.atlas;
+        let get = horizon_client::lang::get;
+        let mine = match &browser.mine {
+            None => None,
+            Some(Ok(_)) if browser.mine_loading => None,
+            Some(Ok(mine)) => Some(mine),
+            Some(Err(e)) => {
+                let text = fit(
+                    atlas,
+                    &get("horizon.mods.failed").replace("{error}", e),
+                    list.w - GAP * 2.0,
+                );
+                batch.text(atlas, &text, list.x + GAP, list.y + GAP, BAD, true);
+                return;
+            }
+        };
+        let Some(mine) = mine else {
+            batch.text(
+                atlas,
+                &get("horizon.mods.loading"),
+                list.x + GAP,
+                list.y + GAP,
+                DIM,
+                true,
+            );
+            return;
+        };
+        if mine.is_empty() {
+            let text = fit(atlas, &get("horizon.mods.mine.none"), list.w - GAP * 2.0);
+            batch.text(atlas, &text, list.x + GAP, list.y + GAP, DIM, true);
+            return;
+        }
+        let game_dir = horizon_client::logging::player_dir();
+        let max = (mine.len() as f32 * ROW - list.h).max(0.0);
+        let scroll = browser.scroll.clamp(0.0, max);
+        for (i, m) in mine.iter().enumerate() {
+            let y = list.y + i as f32 * ROW - scroll;
+            if y < list.y - 0.5 || y + ROW > list.y + list.h + 0.5 {
+                continue;
+            }
+            batch.fill(atlas, list.x, y + ROW - 1.0, list.w, 1.0, ROW_FACE);
+            let text_w = list.w - BUTTON_W - GAP * 4.0;
+            batch.text(
+                atlas,
+                &fit(atlas, &m.id, text_w),
+                list.x + GAP,
+                y + 3.0,
+                INK,
+                true,
+            );
+            let kind = get(if m.native {
+                "horizon.mods.mine.native"
+            } else {
+                "horizon.mods.mine.content"
+            });
+            let by = get("horizon.mods.mine.by")
+                .replace("{version}", &m.version)
+                .replace("{kind}", &kind);
+            batch.text(
+                atlas,
+                &fit(atlas, &by, text_w),
+                list.x + GAP,
+                y + 13.0,
+                DIM,
+                false,
+            );
+            let summary = get(if m.native {
+                "horizon.mods.mine.native_summary"
+            } else {
+                "horizon.mods.mine.summary"
+            });
+            batch.text(
+                atlas,
+                &fit(atlas, &summary, text_w),
+                list.x + GAP,
+                y + 23.0,
+                DIM,
+                false,
+            );
+            let b = button(list, y);
+            let (label, face) = match browser.jobs.get(&m.id) {
+                _ if m.native => (get("horizon.mods.mine.build"), BUTTON_OFF),
+                Some(Job::Downloading(k)) => (
+                    get("horizon.mods.downloading")
+                        .replace("{percent}", &format!("{:.0}", k * 100.0)),
+                    BUTTON_OFF,
+                ),
+                Some(Job::Failed(_)) => (get("horizon.mods.retry"), BAD),
+                _ if m.installed(&game_dir) => (get("horizon.mods.installed"), BUTTON_OFF),
+                _ => (get("horizon.mods.get"), BUTTON),
+            };
+            batch.fill(atlas, b.x, b.y, b.w, b.h, face);
+            centred(batch, atlas, &label, b, INK);
+        }
     }
 }
 
