@@ -7,6 +7,12 @@ on:
   workflow_dispatch:
   push:
     branches: [ios-build]
+    # Horizon Mods has its own workflow (ios-mods-app.yml).
+    paths-ignore:
+      - packaging/ios/builder/**
+      - packaging/ios/native-mods.md
+      - .github/workflows/ios-mods-*.yml
+      - .github/workflows/ios-native-*.yml
 
 permissions:
   contents: read
