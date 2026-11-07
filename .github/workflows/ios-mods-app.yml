@@ -1,0 +1,46 @@
+# Builds Horizon Mods (packaging/ios/builder/), the iPhone app that picks native mods and starts
+# "iOS build with native mods" runs, and publishes it as a pre-release tagged ios-mods-r<N>.
+name: iOS Horizon Mods app
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ios-build]
+    paths:
+      - packaging/ios/builder/**
+      - .github/workflows/ios-mods-app.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ios-mods-app
+  cancel-in-progress: true
+
+jobs:
+  ipa:
+    runs-on: macos-15-intel
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build
+        run: |
+          chmod +x packaging/ios/builder/package.sh
+          packaging/ios/builder/package.sh "1.0.$GITHUB_RUN_NUMBER" "$GITHUB_REPOSITORY" dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HorizonMods-ios
+          path: dist/HorizonMods.ipa
+          if-no-files-found: error
+      - name: Publish the release
+        if: github.ref == 'refs/heads/ios-build'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          file="dist/HorizonMods-1.0.$GITHUB_RUN_NUMBER.ipa"
+          cp dist/HorizonMods.ipa "$file"
+          gh release create "ios-mods-r$GITHUB_RUN_NUMBER" "$file" --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" --prerelease --title "Horizon Mods $GITHUB_RUN_NUMBER (iPhone app)" \
+            --notes "Pick native mods on your iPhone and have GitHub build Horizon with them. Sideload this .ipa like Horizon's (packaging/ios/native-mods.md)."

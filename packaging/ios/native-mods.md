@@ -3,6 +3,14 @@
 Native mods change Horizon's own Rust source before it is compiled (docs/native-mods.md). An iPhone
 can't compile, so GitHub does it, into a custom `.ipa`:
 
+The easiest way is the **Horizon Mods** app (`builder/`, released as `ios-mods-r<N>` by
+`ios-mods-app.yml`): sideload it, paste a fine-grained GitHub token with **Actions: Read and write**
+on the fork, tick mods and tap **Build**. It starts the workflow below with the mods typed in (no
+issue needed), shows each build's progress, and opens the finished `.ipa` in SideStore or AltStore,
+or shares it to any other signer.
+
+Without the app:
+
 1. **Pick the mods.** In the fork's **Native mods for iOS** issue, tick the mods, then tick
    **Build now**. (Or run **Actions → iOS build with native mods** and type their ids.) The issue's
    list is refreshed from the registry every day (`ios-native-list.yml`); run that workflow once to
