@@ -112,9 +112,15 @@ jobs:
         run: |
           revision=$(git -C horizon rev-parse HEAD)
           echo "$revision" > horizon/.horizon-revision
-          horizon/launcher/target/release/horizon-launcher native-stage mods \
-            --source horizon --revision "$revision" --out staged --rust "$HOME/.cargo" \
-            --trust-native-code | tee staged.json
+          # Absolute paths: the launcher runs horizon-mixins from its own folder.
+          if ! horizon/launcher/target/release/horizon-launcher native-stage "$PWD/mods" \
+            --source "$PWD/horizon" --revision "$revision" --out "$PWD/staged" --rust "$HOME/.cargo" \
+            --trust-native-code > staged.json; then
+            cat staged.json
+            tail -n 80 "$HORIZON_LAUNCHER_HOME/native/build.log" || true
+            exit 1
+          fi
+          cat staged.json
           package=$(python3 -c 'import json;print(json.load(open("staged.json"))["package"])')
           features=$(python3 -c 'import json;print("--features horizon-client/mods" if json.load(open("staged.json"))["mods_feature"] else "")')
           echo "package=$package" >> "$GITHUB_OUTPUT"
