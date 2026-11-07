@@ -1,9 +1,0 @@
-# Test hello: a native trait mod (docs/native-mods.md, "Trait mods"). Build it with
-# `horizon-launcher native-build <this folder> --instance <instance> --trust-native-code`.
-[mod]
-id = "test_hello"
-version = "0.1.0"
-
-
-[api]
-path = "api"
