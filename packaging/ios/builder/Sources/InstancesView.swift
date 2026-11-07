@@ -115,15 +115,15 @@ struct InstancesView: View {
             VStack(alignment: .leading, spacing: 14) {
                 PageHeader(title: "Instances", caption: "Each build with mods is its own app. Launch one from here.")
                 InstanceCard(name: "Horizon", detail: "No native mods", icon: "mark", asset: nil,
-                             play: { launch(URL(string: "horizon://"), "Horizon") }, remove: nil)
+                             play: { launch(store.launchURL(bundle: "dev.horizon.game", scheme: "horizon"), "Horizon") }, remove: nil)
                 ForEach(store.shownInstances) { instance in
                     InstanceCard(
                         name: instance.name,
                         detail: instance.mods.isEmpty ? "Build \(instance.build)" : store.names(instance.mods),
                         icon: nil,
                         asset: instance.asset,
-                        footnote: "Build \(instance.build) · horizon-i\(instance.id)",
-                        play: { launch(instance.link, instance.name) },
+                        footnote: "Build \(instance.build) · \(instance.bundle)",
+                        play: { launch(store.launchURL(bundle: instance.bundle, scheme: instance.scheme), instance.name) },
                         remove: { withAnimation { _ = store.hidden.insert(instance.id) } })
                 }
                 if store.shownInstances.isEmpty {
@@ -134,8 +134,19 @@ struct InstancesView: View {
                         Button("Pick mods") { store.tab = .mods }.buttonStyle(QuietButton())
                     }
                 }
-                Plate {
-                    Text("An instance keeps its own worlds and settings, so copy the game files into its folder in the Files app the first time, as for Horizon. A free Apple ID can keep 3 sideloaded apps at once.")
+                Plate("Run them in LiveContainer") {
+                    Toggle(isOn: $store.useLiveContainer) {
+                        Text("Play opens instances in LiveContainer")
+                            .font(.geist(14, .medium))
+                            .foregroundStyle(Theme.ink(0.9))
+                    }
+                    .tint(Theme.accent)
+                    Text(store.useLiveContainer
+                         ? "Install each build with Install, Open in LiveContainer. Every instance then lives inside LiveContainer: one app slot for all of them."
+                         : "A free Apple ID keeps 3 sideloaded apps at once. LiveContainer runs every instance inside itself, so they share one slot.")
+                        .font(.geist(13))
+                        .foregroundStyle(Theme.ink(0.7))
+                    Text("An instance keeps its own worlds and settings, so copy the game files into its Documents folder in the Files app the first time, as for Horizon.")
                         .font(.geist(13))
                         .foregroundStyle(Theme.ink(0.7))
                 }
@@ -153,7 +164,9 @@ struct InstancesView: View {
         ) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text("It isn't installed on this iPhone, or it's from before builds had a launch link. Install its latest build, then try again.")
+            Text(store.useLiveContainer
+                 ? "LiveContainer isn't installed, or this Horizon isn't in it yet. Install its latest build with Open in LiveContainer, then try again."
+                 : "It isn't installed on this iPhone, or it's from before builds had a launch link. Install its latest build, then try again.")
         }
     }
 
@@ -216,14 +229,8 @@ struct InstanceCard: View {
                 .buttonStyle(AccentButton(height: 46))
                 if let asset, let url = URL(string: asset.browserDownloadUrl) {
                     Menu {
-                        ForEach(["sidestore", "altstore"], id: \.self) { scheme in
-                            if let encoded = asset.browserDownloadUrl.addingPercentEncoding(withAllowedCharacters: .alphanumerics),
-                               let link = URL(string: "\(scheme)://install?url=\(encoded)") {
-                                Link(destination: link) {
-                                    Label(scheme == "sidestore" ? "Open in SideStore" : "Open in AltStore",
-                                          systemImage: "arrow.down.app")
-                                }
-                            }
+                        ForEach(Sideload.links(asset.browserDownloadUrl)) { link in
+                            Link(destination: link.url) { Label(link.label, systemImage: "arrow.down.app") }
                         }
                         Link(destination: url) { Label("Download in Safari", systemImage: "safari") }
                         ShareLink(item: url) { Label("Share", systemImage: "square.and.arrow.up") }

@@ -147,23 +147,12 @@ struct InstallButtons: View {
 
     private var url: URL? { URL(string: asset.browserDownloadUrl) }
 
-    /// A sideloading app's "install from this link" address.
-    private func install(_ scheme: String) -> URL? {
-        guard let encoded = asset.browserDownloadUrl.addingPercentEncoding(withAllowedCharacters: .alphanumerics) else {
-            return nil
-        }
-        return URL(string: "\(scheme)://install?url=\(encoded)")
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Menu {
-                    if let link = install("sidestore") {
-                        Link(destination: link) { Label("Open in SideStore", systemImage: "arrow.down.app") }
-                    }
-                    if let link = install("altstore") {
-                        Link(destination: link) { Label("Open in AltStore", systemImage: "arrow.down.app") }
+                    ForEach(Sideload.links(asset.browserDownloadUrl)) { link in
+                        Link(destination: link.url) { Label(link.label, systemImage: "arrow.down.app") }
                     }
                     if let url {
                         Link(destination: url) { Label("Download in Safari", systemImage: "safari") }

@@ -9,6 +9,13 @@ on the fork, tick mods and tap **Build**. It starts the workflow below with the 
 issue needed), shows each build's progress, and opens the finished `.ipa` in SideStore or AltStore,
 or shares it to any other signer.
 
+Each build is an **instance**: its own app identifier (`dev.horizon.game.i<digits>`) and link
+(`horizon-i<digits>://`), so instances install side by side; building into an existing instance
+updates it. Horizon Mods' Play tab launches each one. With **Run them in LiveContainer** on, it installs
+and launches them inside [LiveContainer](https://github.com/LiveContainer/LiveContainer)
+(`livecontainer://install?url=…`, `livecontainer://livecontainer-launch?bundle-name=<identifier>.app`),
+so every instance shares LiveContainer's one app slot instead of taking one each.
+
 Without the app:
 
 1. **Pick the mods.** In the fork's **Native mods for iOS** issue, tick the mods, then tick

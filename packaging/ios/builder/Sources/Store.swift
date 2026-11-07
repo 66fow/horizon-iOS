@@ -12,6 +12,10 @@ final class Store: ObservableObject {
     static let registry = URL(string: "https://horizon-rust.github.io/horizon-mods/index.json")!
 
     @Published var tab: AppTab = .mods
+    /// Instances run inside LiveContainer (one app slot for all of them) instead of as apps of their own.
+    @Published var useLiveContainer: Bool {
+        didSet { UserDefaults.standard.set(useLiveContainer, forKey: "useLiveContainer") }
+    }
     @Published var repo: String {
         didSet {
             UserDefaults.standard.set(repo, forKey: "repo")
@@ -62,6 +66,7 @@ final class Store: ObservableObject {
         runMods = defaults.dictionary(forKey: "runMods") as? [String: [String]] ?? [:]
         runInstance = defaults.dictionary(forKey: "runInstance") as? [String: String] ?? [:]
         hidden = Set(defaults.stringArray(forKey: "hiddenInstances") ?? [])
+        useLiveContainer = defaults.bool(forKey: "useLiveContainer")
         // `-HorizonTab builds` opens on a tab (the preview screenshots use it).
         switch defaults.string(forKey: "HorizonTab") {
         case "builds": tab = .builds
@@ -80,6 +85,14 @@ final class Store: ObservableObject {
     var activeCount: Int { runs.filter { $0.state == .running }.count }
     /// The picked mods that are in the list, in the list's order.
     var pickedInOrder: [String] { mods.map(\.id).filter(picked.contains) }
+
+    /// The link that opens the Horizon with this app identifier: in LiveContainer (which keeps each
+    /// app in a folder named after its identifier), or the app's own link.
+    func launchURL(bundle: String, scheme: String) -> URL? {
+        useLiveContainer
+            ? URL(string: "livecontainer://livecontainer-launch?bundle-name=\(bundle).app")
+            : URL(string: "\(scheme)://")
+    }
 
     var shownInstances: [Instance] { instances.filter { !hidden.contains($0.id) } }
 

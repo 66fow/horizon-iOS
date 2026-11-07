@@ -229,7 +229,8 @@ struct Instance: Identifiable {
     var asset: Asset?
     var date: Date
 
-    var link: URL? { URL(string: "horizon-i\(id)://") }
+    var bundle: String { "dev.horizon.game.i\(id)" }
+    var scheme: String { "horizon-i\(id)" }
 
     private struct Marker: Decodable {
         let id: String
@@ -248,5 +249,20 @@ struct Instance: Identifiable {
         else { return nil }
         return Instance(id: marker.id, name: marker.name, mods: marker.mods, build: build,
                         asset: release.assets.first { $0.name.hasSuffix(".ipa") }, date: release.createdAt)
+    }
+}
+
+/// The apps that install an .ipa from a link, LiveContainer first.
+struct Sideload: Identifiable {
+    let label: String
+    let url: URL
+    var id: String { label }
+
+    static func links(_ ipa: String) -> [Sideload] {
+        guard let encoded = ipa.addingPercentEncoding(withAllowedCharacters: .alphanumerics) else { return [] }
+        let apps = [("Open in LiveContainer", "livecontainer"), ("Open in SideStore", "sidestore"), ("Open in AltStore", "altstore")]
+        return apps.compactMap { app in
+            URL(string: "\(app.1)://install?url=\(encoded)").map { Sideload(label: app.0, url: $0) }
+        }
     }
 }
