@@ -112,6 +112,10 @@ jobs:
         run: |
           revision=$(git -C horizon rev-parse HEAD)
           echo "$revision" > horizon/.horizon-revision
+          # As in GitHub's source archive, which the launcher stages from: no links
+          # (horizon-mixins refuses them), no git folder.
+          find horizon -type l -print -delete
+          rm -rf horizon/.git
           # Absolute paths: the launcher runs horizon-mixins from its own folder.
           if ! horizon/launcher/target/release/horizon-launcher native-stage "$PWD/mods" \
             --source "$PWD/horizon" --revision "$revision" --out "$PWD/staged" --rust "$HOME/.cargo" \
