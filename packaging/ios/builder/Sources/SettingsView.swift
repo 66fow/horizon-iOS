@@ -7,6 +7,7 @@ struct SettingsView: View {
     @State private var check: (ok: Bool, text: String)?
     @State private var importingCertificate = false
     @State private var certificateFile: Data?
+    @State private var certificateProblem: String?
 
     var body: some View {
         ScrollView {
@@ -87,7 +88,7 @@ struct SettingsView: View {
                         .foregroundStyle(Theme.ink(0.55))
                 }
 
-                CertificatePlate(importing: $importingCertificate, picked: $certificateFile)
+                CertificatePlate(importing: $importingCertificate, picked: $certificateFile, problem: certificateProblem)
 
                 AIAccounts()
 
@@ -133,7 +134,15 @@ struct SettingsView: View {
         .scrollDismissesKeyboard(.interactively)
         // Any file: a .p12 from another app or iCloud doesn't always carry the PKCS #12 type.
         .fileImporter(isPresented: $importingCertificate, allowedContentTypes: [.item]) { result in
-            if case .success(let url) = result { certificateFile = Certificate.read(url) }
+            switch result {
+            case .success(let url):
+                certificateFile = Certificate.read(url)
+                certificateProblem = certificateFile == nil
+                    ? "Couldn't read \(url.lastPathComponent). Copy it to On My iPhone in Files, then pick it there."
+                    : nil
+            case .failure(let error):
+                certificateProblem = "Couldn't open the file: \(error.localizedDescription)"
+            }
         }
         .onAppear(perform: takePendingFile)
         .onReceive(NotificationCenter.default.publisher(for: .certificateFile)) { _ in takePendingFile() }

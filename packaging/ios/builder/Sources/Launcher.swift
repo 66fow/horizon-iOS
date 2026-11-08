@@ -251,6 +251,8 @@ struct CertificatePlate: View {
     /// ScrollView may not open, and can't be reached from the Files share sheet).
     @Binding var importing: Bool
     @Binding var picked: Data?
+    /// Why the last picked file couldn't be used.
+    var problem: String?
     @State private var cert = Certificate.stored
     @State private var password = ""
 
@@ -296,6 +298,9 @@ struct CertificatePlate: View {
                 .frame(maxWidth: .infinity)
             }
             .buttonStyle(QuietButton())
+            if let problem, picked == nil {
+                Text(problem).font(.geist(13)).foregroundStyle(Theme.warn)
+            }
             Text("Or in Files, long-press the .p12, tap Share and pick Horizon Mods.")
                 .font(.geist(12)).foregroundStyle(Theme.ink(0.55))
             if picked != nil {
