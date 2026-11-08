@@ -275,6 +275,9 @@ enum Signer {
 
     static func describe(_ certificate: Certificate) -> Result<(name: String, team: String, until: String), Failure> {
         #if targetEnvironment(simulator)
+        if Store.tutorial != nil {
+            return .success(("Apple Development: Your Name (A1B2C3D4E5)", "A1B2C3D4E5", "2027-11-08"))
+        }
         return .failure(Failure(message: "Certificates are read on an iPhone."))
         #else
         let data: Data

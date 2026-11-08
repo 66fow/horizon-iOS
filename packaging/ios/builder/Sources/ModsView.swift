@@ -42,6 +42,7 @@ struct ModsView: View {
             withAnimation(.easeInOut(duration: 1.4)) { reader.scrollTo(target, anchor: .top) }
         }
         }
+        .onChange(of: store.demoBuildSheet) { open in confirming = open }
         .onChange(of: store.demoDetail) { id in
             detail = id.flatMap { id in store.mods.first { $0.id == id } }
         }

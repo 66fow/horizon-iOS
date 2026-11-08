@@ -54,6 +54,7 @@ struct RootView: View {
         }
         .task { await store.loadMods() }
         .task { await Demo.start(store) }
+        .task { await Demo.tutorial(store, library) }
         .onOpenURL { url in
             // SideStore's or AltStore's answer to "From SideStore/AltStore" in Settings.
             if let cert = Certificate.from(url) {

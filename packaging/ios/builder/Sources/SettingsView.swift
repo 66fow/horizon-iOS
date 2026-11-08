@@ -10,10 +10,12 @@ struct SettingsView: View {
     @State private var certificateProblem: String?
 
     var body: some View {
+        ScrollViewReader { reader in
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 PageHeader(title: "Settings", caption: "Your fork, and the token that lets this app start builds.")
 
+                Color.clear.frame(height: 0).id("repo")
                 Plate("Your fork") {
                     FieldBox {
                         TextField("", text: $store.repo, prompt: Text("owner/repository").foregroundColor(Theme.ink(0.4)))
@@ -27,6 +29,7 @@ struct SettingsView: View {
                         .foregroundStyle(Theme.ink(0.55))
                 }
 
+                Color.clear.frame(height: 0).id("token")
                 Plate("GitHub token") {
                     FieldBox {
                         SecureField("", text: $store.token, prompt: Text("github_pat_…").foregroundColor(Theme.ink(0.4)))
@@ -88,10 +91,12 @@ struct SettingsView: View {
                         .foregroundStyle(Theme.ink(0.55))
                 }
 
+                Color.clear.frame(height: 0).id("certificate")
                 CertificatePlate(importing: $importingCertificate, picked: $certificateFile, problem: certificateProblem)
 
                 AIAccounts()
 
+                Color.clear.frame(height: 0).id("maketoken")
                 Plate("Make a token") {
                     StepRow(number: 1, text: "Open GitHub's token page below and sign in.")
                     StepRow(number: 2, text: "Name it “Horizon Mods”. Under Repository access choose Only select repositories, then \(store.repo.isEmpty ? "your fork" : store.repo).")
@@ -131,6 +136,11 @@ struct SettingsView: View {
             .padding(.horizontal, 16)
             .padding(.bottom, 16)
         }
+        .onChange(of: store.demoScroll) { target in
+            guard let target else { return }
+            withAnimation(.easeInOut(duration: 1.2)) { reader.scrollTo(target, anchor: .top) }
+        }
+        }
         .scrollDismissesKeyboard(.interactively)
         // Any file: a .p12 from another app or iCloud doesn't always carry the PKCS #12 type.
         // UIKit's own picker, copying the file in: SwiftUI's picker left a .p12 untappable.
@@ -147,6 +157,7 @@ struct SettingsView: View {
         }
         .onAppear(perform: takePendingFile)
         .onReceive(NotificationCenter.default.publisher(for: .certificateFile)) { _ in takePendingFile() }
+        .onReceive(NotificationCenter.default.publisher(for: .certificateImported)) { _ in certificateFile = nil }
     }
 
     private func takePendingFile() {

@@ -44,6 +44,82 @@ enum Demo {
         store.picked = before
     }
 
+    /// One part of the install tutorial (`-HorizonTutorial settings|mods|builds|play`), recorded on its
+    /// own in a simulator (.github/workflows/ios-mods-tutorial.yml).
+    @MainActor
+    static func tutorial(_ store: Store, _ library: Library) async {
+        guard let part = Store.tutorial else { return }
+        func type(_ text: String, into set: (String) -> Void) async {
+            var typed = ""
+            for c in text {
+                typed.append(c)
+                set(typed)
+                await wait(0.07)
+            }
+        }
+        switch part {
+        case "settings":
+            store.tab = .settings
+            store.repo = ""
+            store.token = ""
+            Certificate.save(nil)
+            await wait(2.5)
+            await type("yourname/horizon-iOS") { store.repo = $0 }
+            await wait(1.5)
+            store.demoScroll = "maketoken"
+            await wait(5)
+            store.demoScroll = "token"
+            await wait(2)
+            await type("github_pat_11ABCDEFG0123456789") { store.token = $0 }
+            await wait(2)
+            store.demoScroll = "certificate"
+            await wait(3)
+            Certificate.pendingFile = Data("tutorial".utf8)
+            NotificationCenter.default.post(name: .certificateFile, object: nil)
+            await wait(3)
+            Certificate.save(Certificate(p12: Data("tutorial".utf8), password: "tutorial"))
+            NotificationCenter.default.post(name: .certificateImported, object: nil)
+            await wait(4)
+        case "mods":
+            store.tab = .mods
+            store.picked = []
+            for _ in 0..<40 where store.mods.isEmpty { await wait(0.5) }
+            await wait(2.5)
+            let want = ["baritone", "appleskin", "chop", "mod_menu", "fps_overlay"]
+            for id in want {
+                guard let mod = store.mods.first(where: { $0.id == id }) else { continue }
+                store.demoScroll = mod.id
+                await wait(1.4)
+                withAnimation(.easeOut(duration: 0.15)) { store.toggle(mod) }
+                await wait(0.9)
+            }
+            store.demoScroll = "top"
+            await wait(1.5)
+            store.demoDetail = "baritone"
+            await wait(5)
+            store.demoDetail = nil
+            await wait(1.5)
+            store.demoBuildSheet = true
+            await wait(6)
+            store.demoBuildSheet = false
+            await wait(2)
+        case "builds":
+            store.tab = .builds
+            await wait(12)
+        case "play":
+            store.tab = .instances
+            for _ in 0..<40 where library.remote.isEmpty { await wait(0.5) }
+            await wait(3)
+            let fresh = library.remote.filter { !library.isLocal($0) }
+            if let build = fresh.first(where: { $0.tag.hasPrefix("ios-native") }) ?? fresh.first {
+                await library.get(build)
+            }
+            await wait(5)
+        default:
+            break
+        }
+    }
+
     private static func wait(_ seconds: Double) async {
         try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
     }

@@ -15,6 +15,11 @@ final class Store: ObservableObject {
     /// The recorded tour (Demo.swift): a mod row to scroll to, a mod page to open.
     @Published var demoScroll: String?
     @Published var demoDetail: String?
+    /// The tutorial recording opens the build sheet with this (Demo.swift).
+    @Published var demoBuildSheet = false
+    /// `-HorizonTutorial <part>`: recording the install tutorial (Demo.swift). GitHub is asked without
+    /// a token then, as the one shown is made up.
+    static let tutorial = UserDefaults.standard.string(forKey: "HorizonTutorial")
     /// Instances run inside LiveContainer (one app slot for all of them) instead of as apps of their own.
     @Published var useLiveContainer: Bool {
         didSet { UserDefaults.standard.set(useLiveContainer, forKey: "useLiveContainer") }
@@ -87,7 +92,7 @@ final class Store: ObservableObject {
 
     private var gitHub: GitHub {
         GitHub(repo: repo.trimmingCharacters(in: .whitespaces),
-               token: token.trimmingCharacters(in: .whitespacesAndNewlines))
+               token: Self.tutorial != nil ? "" : token.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     var hasToken: Bool { !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
