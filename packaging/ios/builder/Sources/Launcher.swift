@@ -109,6 +109,8 @@ enum Launcher {
             }.value
             library.markSigned(build, with: certificate.fingerprint)
         }
+        // Application Support isn't made for an app until something makes it.
+        try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
         try JSONEncoder().encode(Pending(folder: build.folder, app: build.app)).write(to: pendingFile, options: .atomic)
         relaunch()
     }

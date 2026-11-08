@@ -4,6 +4,11 @@ import SwiftUI
 @main
 enum Entry {
     static func main() {
+        // iOS doesn't make Application Support for an app; the launch note, drafts and the
+        // keychain's file fallbacks live there.
+        try? FileManager.default.createDirectory(
+            at: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0],
+            withIntermediateDirectories: true)
         Launcher.runPendingLaunch()
         HorizonModsApp.main()
     }
