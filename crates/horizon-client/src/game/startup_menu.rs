@@ -27,6 +27,9 @@ pub(super) struct StartupMenu {
     selection: AppendSelection,
     /// The narrator's `NARRATOR_TOGGLE` toast, handed to the game with the title.
     narrator_toast: Option<horizon_client::toasts::SystemToast>,
+    /// The Mods page's Get Mods button was pressed: the mods screen opens once
+    /// the game has the screen.
+    get_mods: bool,
     /// The screens' narration, handed to the game with the title (which
     /// stays the screen already opened).
     narration: horizon_client::screen_narrator::ScreenNarrator,
@@ -123,6 +126,9 @@ impl StartupMenu {
         game.perf = std::mem::take(&mut self.perf);
         game.narrator_toast = self.narrator_toast.take();
         game.narration = std::mem::take(&mut self.narration);
+        if std::mem::take(&mut self.get_mods) {
+            game.open_mods();
+        }
         // Preserve an existing resource-error screen opened by start_game.
         if self.options_open {
             let resource_error = game.ui.options.resource_error.take();
@@ -554,6 +560,7 @@ impl Loading {
                     let _ = std::fs::create_dir_all(&dir);
                     packs::open_folder(&dir);
                 }
+                Event::GetMods => self.menu.get_mods = true,
                 Event::OpenModFolder => {
                     let dir = Game::game_dir().join(horizon_client::mod_list::DIR);
                     let _ = std::fs::create_dir_all(&dir);
