@@ -212,7 +212,10 @@ const DETAIL_REQUEST: usize = 512;
 /// terrain at `lodDistance` 256: 18 FPS average, 482 ms at the 99th
 /// percentile, where the median frame was 6 ms. What the budget leaves waits
 /// in `Lod::detail_backlog` for the frames after it.
+#[cfg(not(target_os = "ios"))]
 const DETAIL_BUDGET: std::time::Duration = std::time::Duration::from_millis(3);
+#[cfg(target_os = "ios")]
+const DETAIL_BUDGET: std::time::Duration = std::time::Duration::from_millis(1);
 /// Top solid face and optional fluid face, in absolute block coordinates.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Surface {
