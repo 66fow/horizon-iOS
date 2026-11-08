@@ -117,17 +117,23 @@ fn a_quick_button_tap_still_lasts_a_game_tick() {
 }
 
 #[test]
-fn sneak_toggles() {
+fn sneak_is_down_while_the_finger_is_and_the_game_decides_toggle_or_hold() {
+    // The touch button only reports the finger: with the game's Hold option
+    // sneaking lasts as long as the finger, with Toggle the game flips it on
+    // the press. No latch of the button's own (it made Toggle flip twice).
     let l = layout();
     let mut t = TouchControls::default();
     let now = Instant::now();
     let at = centre(&l, TouchButton::Sneak);
     t.touch(&l, 1, Started, at, now);
-    t.touch(&l, 1, Ended, at, now);
     assert_eq!(t.frame(&l, after(now, 5000)).held, [TouchButton::Sneak]);
-    t.touch(&l, 2, Started, at, now);
-    t.touch(&l, 2, Ended, at, now);
-    assert!(t.frame(&l, after(now, 5000)).held.is_empty());
+    t.touch(&l, 1, Ended, at, after(now, 5000));
+    assert!(t.frame(&l, after(now, 5100)).held.is_empty());
+    // A quick tap still lasts a game tick.
+    t.touch(&l, 2, Started, at, after(now, 6000));
+    t.touch(&l, 2, Ended, at, after(now, 6000));
+    assert_eq!(t.frame(&l, after(now, 6020)).held, [TouchButton::Sneak]);
+    assert!(t.frame(&l, after(now, 6500)).held.is_empty());
 }
 
 #[test]
@@ -157,26 +163,68 @@ fn where_the_game_toggles_sneaking_each_tap_is_a_press() {
 }
 
 #[test]
-fn the_stick_follows_the_finger_from_where_it_landed() {
+fn the_stick_stays_where_it_is_and_the_finger_is_measured_from_its_home() {
     let l = layout();
+    let home = l.stick_home;
     let mut t = TouchControls::default();
     let now = Instant::now();
-    t.touch(&l, 1, Started, (120.0, 200.0), now);
-    // Half the radius to the right: half strafe, no forward.
-    t.touch(&l, 1, Moved, (120.0 + STICK_RADIUS / 2.0, 200.0), now);
+    t.touch(&l, 1, Started, home, now);
+    // Half the radius to the right of home: half strafe, no forward.
+    t.touch(&l, 1, Moved, (home.0 + STICK_RADIUS / 2.0, home.1), now);
     let f = t.frame(&l, now);
     assert!(
         (f.stick[0] - 0.5).abs() < 1e-5 && f.stick[1] == 0.0,
         "{:?}",
         f.stick
     );
+    // The drawn stick never leaves its home.
+    assert_eq!(t.stick(&l).map(|(origin, _)| origin), Some(home));
     // Far up: clamped to full forward, which sprints.
-    t.touch(&l, 1, Moved, (120.0, 30.0), now);
+    t.touch(&l, 1, Moved, (home.0, home.1 - 200.0), now);
     let f = t.frame(&l, now);
     assert!((f.stick[1] - 1.0).abs() < 1e-5, "{:?}", f.stick);
     assert_eq!(f.held, [TouchButton::Sprint]);
-    t.touch(&l, 1, Ended, (120.0, 30.0), now);
+    t.touch(&l, 1, Ended, (home.0, home.1 - 200.0), now);
     assert_eq!(t.frame(&l, now).stick, [0.0, 0.0]);
+}
+
+#[test]
+fn a_finger_that_lands_off_the_stick_is_not_the_stick() {
+    let l = layout();
+    let mut t = TouchControls::default();
+    let now = Instant::now();
+    // Well above the stick's square, on the left: the view.
+    t.touch(&l, 1, Started, (60.0, 60.0), now);
+    t.touch(&l, 1, Moved, (70.0, 60.0), now);
+    let f = t.frame(&l, now);
+    assert_eq!(f.stick, [0.0, 0.0]);
+    assert_eq!(f.look, (10.0, 0.0));
+}
+
+#[test]
+fn sprint_keeps_going_until_the_stick_comes_back() {
+    let l = layout();
+    let home = l.stick_home;
+    let mut t = TouchControls::default();
+    let now = Instant::now();
+    t.touch(&l, 1, Started, home, now);
+    assert!(t.frame(&l, now).held.is_empty());
+    // Pushed forward: sprints.
+    t.touch(&l, 1, Moved, (home.0, home.1 - STICK_RADIUS), now);
+    assert_eq!(t.frame(&l, now).held, [TouchButton::Sprint]);
+    // The thumb relaxes to half way: still sprinting.
+    t.touch(&l, 1, Moved, (home.0, home.1 - STICK_RADIUS * 0.5), now);
+    assert_eq!(t.frame(&l, now).held, [TouchButton::Sprint]);
+    // Back near the centre: the run ends, and it takes a new push to start.
+    t.touch(&l, 1, Moved, (home.0, home.1 - STICK_RADIUS * 0.1), now);
+    assert!(t.frame(&l, now).held.is_empty());
+    t.touch(&l, 1, Moved, (home.0, home.1 - STICK_RADIUS * 0.5), now);
+    assert!(t.frame(&l, now).held.is_empty());
+    // Lifting the finger ends it too.
+    t.touch(&l, 1, Moved, (home.0, home.1 - STICK_RADIUS), now);
+    assert_eq!(t.frame(&l, now).held, [TouchButton::Sprint]);
+    t.touch(&l, 1, Ended, (home.0, home.1 - STICK_RADIUS), now);
+    assert!(t.frame(&l, now).held.is_empty());
 }
 
 #[test]
@@ -236,9 +284,10 @@ fn a_second_finger_in_the_stick_area_looks() {
     let l = layout();
     let mut t = TouchControls::default();
     let now = Instant::now();
-    t.touch(&l, 1, Started, (120.0, 200.0), now);
-    t.touch(&l, 2, Started, (150.0, 200.0), now);
-    t.touch(&l, 2, Moved, (160.0, 200.0), now);
+    let home = l.stick_home;
+    t.touch(&l, 1, Started, home, now);
+    t.touch(&l, 2, Started, (home.0 + 20.0, home.1), now);
+    t.touch(&l, 2, Moved, (home.0 + 30.0, home.1), now);
     let f = t.frame(&l, now);
     assert_eq!(f.stick, [0.0, 0.0]);
     assert_eq!(f.look, (10.0, 0.0));
@@ -413,6 +462,15 @@ fn a_moved_stick_takes_a_square_around_where_it_was_put() {
 }
 
 #[test]
+fn the_default_stick_has_a_fixed_home_in_the_bottom_left() {
+    let l = layout();
+    let area = l.item(Control::Stick).area;
+    assert_eq!(l.stick_home, area.centre());
+    assert!(area.x >= l.safe.x && area.y + area.h <= l.safe.y + l.safe.h);
+    assert!(l.stick_home.0 < W / 2.0 && l.stick_home.1 > H / 2.0);
+}
+
+#[test]
 fn the_settings_file_reads_back_what_it_wrote() {
     let mut s = TouchSettings::default();
     s.set(
@@ -496,7 +554,7 @@ fn the_editors_toolbar_covers_no_control_where_they_start() {
             let a = item.area;
             let apart =
                 t.x + t.w <= a.x || a.x + a.w <= t.x || t.y + t.h <= a.y || a.y + a.h <= t.y;
-            // The stick's area takes most of the left side; the toolbar may sit over its top.
+            // The stick's square may lie under the toolbar when the stick is moved there.
             assert!(
                 apart || item.control == Control::Stick,
                 "{button:?} covers {:?}",
