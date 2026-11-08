@@ -13,6 +13,8 @@ crate-type = ["staticlib", "rlib"]
 
 [dependencies]
 apple-codesign = { version = "0.29", default-features = false }
+p12-keystore = "0.2"
+x509-certificate = "0.24"
 
 [profile.release]
 opt-level = "s"

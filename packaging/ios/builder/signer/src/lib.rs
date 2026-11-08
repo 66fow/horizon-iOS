@@ -6,7 +6,9 @@
 //! 4 GiB). Then it is signed with the player's certificate (the one their sideloading app signs
 //! Horizon Mods with), so the iPhone lets Horizon Mods load it, and Horizon Mods jumps to its
 //! `main` (its `LC_MAIN` entry), the way an app launcher like LiveContainer runs apps.
-use apple_codesign::{cryptography::parse_pfx_data, AppleCertificate, MachOSigner, SettingsScope, SigningSettings};
+use apple_codesign::cryptography::{parse_pfx_data, InMemoryPrivateKey};
+use apple_codesign::{AppleCertificate, MachOSigner, SettingsScope, SigningSettings};
+use x509_certificate::CapturedX509Certificate;
 use std::ffi::{c_char, CStr};
 
 const MH_MAGIC_64: u32 = 0xfeed_facf;
@@ -122,9 +124,32 @@ pub fn patch(mut d: Vec<u8>) -> Result<Vec<u8>, String> {
     Ok(d)
 }
 
+/// The certificate and private key in `p12`. p12-keystore reads both the classic format (SHA-1
+/// MAC, 3DES/RC2), as Keychain Access writes, and OpenSSL 3's (SHA-256 MAC, AES), as most certificate
+/// sellers hand out. apple-codesign's own reader knows only the classic one, and stops the program
+/// on any other MAC, so it is only tried for an encryption p12-keystore doesn't know.
+pub fn load(p12: &[u8], password: &str) -> Result<(CapturedX509Certificate, InMemoryPrivateKey), String> {
+    use p12_keystore::error::Error;
+    let store = match p12_keystore::KeyStore::from_pkcs12(p12, password) {
+        Ok(store) => store,
+        Err(Error::MacError(_)) => return Err("The password is wrong for this .p12.".into()),
+        Err(e @ (Error::UnsupportedEncryptionScheme | Error::UnsupportedContentType)) => {
+            return parse_pfx_data(p12, password).map_err(|classic| format!("Couldn't read this .p12 ({e}; {classic})"));
+        }
+        Err(e) => return Err(format!("Couldn't read this .p12 ({e})")),
+    };
+    let (_, chain) = store
+        .private_key_chain()
+        .ok_or("This .p12 has no private key in it: export the certificate with its key.")?;
+    let leaf = chain.chain().first().ok_or("This .p12 has no certificate in it.")?;
+    let cert = CapturedX509Certificate::from_der(leaf.as_der().to_vec()).map_err(|e| e.to_string())?;
+    let key = InMemoryPrivateKey::from_pkcs8_der(chain.key()).map_err(|e| e.to_string())?;
+    Ok((cert, key))
+}
+
 /// The certificate in `p12`: its subject's common name, its team and when it stops working.
 pub fn certificate(p12: &[u8], password: &str) -> Result<(String, String, String), String> {
-    let (cert, _) = parse_pfx_data(p12, password).map_err(|e| e.to_string())?;
+    let (cert, _) = load(p12, password)?;
     let name = cert.subject_common_name().unwrap_or_default();
     let team = cert.apple_team_id().unwrap_or_default();
     let until = cert.validity_not_after().to_rfc3339();
@@ -134,7 +159,7 @@ pub fn certificate(p12: &[u8], password: &str) -> Result<(String, String, String
 /// `program` as a library signed with the certificate in `p12`, for `identifier`.
 pub fn prepare(program: Vec<u8>, p12: &[u8], password: &str, identifier: &str) -> Result<Vec<u8>, String> {
     let library = patch(program)?;
-    let (cert, key) = parse_pfx_data(p12, password).map_err(|e| e.to_string())?;
+    let (cert, key) = load(p12, password)?;
     let team = cert.apple_team_id();
     let mut settings = SigningSettings::default();
     settings.set_signing_key(&key, cert);
