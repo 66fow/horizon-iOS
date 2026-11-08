@@ -1,0 +1,91 @@
+# Screen recordings of Horizon Mods in an iPhone simulator for the install tutorial video: each part
+# of Demo.tutorial (settings, mods, builds, play before and after the game files) recorded on its
+# own. Published as the pre-release ios-mods-tutorial-r<N>.
+name: iOS Horizon Mods tutorial recordings
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  record:
+    runs-on: macos-15-intel
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build for the simulator
+        run: |
+          app=sim/HorizonMods.app
+          mkdir -p "$app"
+          xcrun --sdk iphonesimulator swiftc -target x86_64-apple-ios16.0-simulator -parse-as-library -O \
+            -o "$app/HorizonMods" packaging/ios/builder/Sources/*.swift
+          sed -e "s/@VERSION@/1.0.0/g" -e "s#@REPO@#$GITHUB_REPOSITORY#g" packaging/ios/builder/Info.plist > "$app/Info.plist"
+          cp packaging/ios/builder/Resources/* "$app/"
+          sips -z 120 120 packaging/ios/builder/icon.png --out "$app/AppIcon60x60@2x.png" >/dev/null
+          sips -z 180 180 packaging/ios/builder/icon.png --out "$app/AppIcon60x60@3x.png" >/dev/null
+          codesign --force --sign - "$app"
+      - name: Boot an iPhone
+        id: sim
+        run: |
+          udid=$(xcrun simctl list devices available -j | python3 -c '
+          import json,sys
+          d=json.load(sys.stdin)["devices"]
+          phones=[x for v in d.values() for x in v if x["name"].startswith("iPhone")]
+          pro=[x for x in phones if "Pro" in x["name"] and "Max" not in x["name"]]
+          print((pro or phones)[-1]["udid"])')
+          xcrun simctl boot "$udid"
+          xcrun simctl bootstatus "$udid" -b
+          xcrun simctl ui "$udid" appearance dark
+          xcrun simctl status_bar "$udid" override --time 9:41 --batteryState charged --batteryLevel 100 \
+            --wifiBars 3 --cellularMode active --cellularBars 4 --dataNetwork 5g
+          xcrun simctl install "$udid" sim/HorizonMods.app
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+      - name: Record
+        env:
+          UDID: ${{ steps.sim.outputs.udid }}
+        run: |
+          mkdir -p media
+          # A first start loads the mod list and images into the app's caches.
+          xcrun simctl launch "$UDID" dev.horizon.mods
+          sleep 20
+          record() {
+            xcrun simctl terminate "$UDID" dev.horizon.mods || true
+            sleep 1
+            xcrun simctl io "$UDID" recordVideo --codec=h264 --force "media/$1.mov" &
+            rec=$!
+            sleep 2
+            xcrun simctl launch "$UDID" dev.horizon.mods -HorizonTutorial "$2"
+            sleep "$3"
+            kill -INT "$rec"
+            wait "$rec" || true
+          }
+          record mods mods 45
+          record builds builds 18
+          record play-before play 12
+          record settings settings 45
+          # The game files in place (a stand-in), then a build fetched and ready to play.
+          data=$(xcrun simctl get_app_container "$UDID" dev.horizon.mods data)
+          mkdir -p "$data/Documents/resources"
+          echo '{}' > "$data/Documents/resources/horizon-resources.json"
+          record play play 75
+          ls -la media
+      - name: Make them mp4
+        run: |
+          brew install ffmpeg >/dev/null
+          for f in media/*.mov; do
+            ffmpeg -hide_banner -loglevel error -i "$f" -vf "fps=30,scale=trunc(iw/2)*2:trunc(ih/2)*2" \
+              -c:v libx264 -preset veryfast -crf 16 -pix_fmt yuv420p -an "${f%.mov}.mp4"
+            rm "$f"
+          done
+          ls -la media
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "ios-mods-tutorial-r$GITHUB_RUN_NUMBER" media/* --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" --prerelease --title "Horizon Mods tutorial recordings ($GITHUB_RUN_NUMBER)" \
+            --notes "Simulator recordings of Horizon Mods for the install tutorial video."
