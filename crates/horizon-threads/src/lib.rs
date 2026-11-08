@@ -25,8 +25,20 @@ pub fn worker_count() -> usize {
     static COUNT: OnceLock<usize> = OnceLock::new();
     *COUNT.get_or_init(|| {
         parse_worker_count(std::env::var("HORIZON_WORKER_THREADS").ok())
-            .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()))
+            .unwrap_or_else(default_worker_count)
     })
+}
+
+/// The machine's cores, except on iOS: an iPhone's cores are few fast ones and several
+/// slow efficiency ones (A13: 2 + 4), `available_parallelism` counts them alike, and
+/// pools sized to all of them leave the render, server and submit threads sharing the
+/// fast cores with the meshers, while the whole chip's heat and memory traffic climb
+/// until the phone throttles (stutter). Four leaves the pools (all but one of it for
+/// chunks, a third for far terrain) three workers and the fast cores to the frame.
+/// `HORIZON_WORKER_THREADS` still overrides it.
+fn default_worker_count() -> usize {
+    let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+    if cfg!(target_os = "ios") { cores.min(4) } else { cores }
 }
 
 /// `Some(n)` when `value` names a positive count (`" 4 "` counts; `"0"`,
@@ -505,7 +517,10 @@ mod tests {
             return;
         }
         let machine = std::thread::available_parallelism().map_or(1, |n| n.get());
-        assert_eq!(super::worker_count(), machine);
+        assert_eq!(super::worker_count(), super::default_worker_count());
+        if !cfg!(target_os = "ios") {
+            assert_eq!(super::worker_count(), machine);
+        }
     }
 
     /// Only a positive number overrides the machine's count.
