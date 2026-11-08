@@ -476,13 +476,24 @@ use winit::{
 
 /// The time a frame spends uploading chunk meshes when the player set no
 /// Chunk Updates or Upload Budget: a burst past it waits for the next frames.
+#[cfg(not(target_os = "ios"))]
 const AUTO_UPLOAD_TIME: Duration = Duration::from_millis(2);
+/// iOS: the GPU's world pass already takes most of a 60 Hz frame on an iPhone 11, so a
+/// frame gives the uploads half the time and the burst spreads over more frames.
+#[cfg(target_os = "ios")]
+const AUTO_UPLOAD_TIME: Duration = Duration::from_millis(1);
 /// `AUTO_UPLOAD_TIME` while the view's terrain is still arriving (a world's
 /// open, a teleport): the meshes waiting then are the view itself, not edits
 /// to it, so a frame gives them more of its time to fill the view sooner.
+#[cfg(not(target_os = "ios"))]
 const AUTO_UPLOAD_TIME_ARRIVING: Duration = Duration::from_millis(6);
+#[cfg(target_os = "ios")]
+const AUTO_UPLOAD_TIME_ARRIVING: Duration = Duration::from_millis(3);
 /// A frame's finished meshes up to this many upload at once, unqueued.
+#[cfg(not(target_os = "ios"))]
 const AUTO_UPLOADS_AT_ONCE: usize = 8;
+#[cfg(target_os = "ios")]
+const AUTO_UPLOADS_AT_ONCE: usize = 3;
 
 #[derive(Clone)]
 struct Options {
@@ -23528,3 +23539,4 @@ fn write_level_for_role(
         level.write_without_player(dir)
     }
 }
+                      
