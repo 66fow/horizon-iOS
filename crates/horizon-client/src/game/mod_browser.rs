@@ -1,5 +1,5 @@
-//! The mods screen of the iOS build (which has no launcher): a "Get mods"
-//! button on the title screen opens Horizon's registry (playhorizon.dev/mods)
+//! The mods screen of the iOS build (which has no launcher): the "Get mods"
+//! button on the options' Mods page opens Horizon's registry (playhorizon.dev/mods)
 //! over it, in tabs for mods, native mods, resource packs and shader packs. A
 //! tap on Get downloads, checks and installs the file
 //! (`horizon_client::mod_registry`). New mods load the next time Horizon
@@ -302,26 +302,21 @@ impl Game<'_> {
         self.touch_safe(batch.width, batch.height, batch.scale)
     }
 
-    /// The title screen's "Get mods" button, top right (iOS).
-    fn get_mods_button(&self, batch: &HudBatch) -> Option<Area> {
-        if !super::touch::TOUCH_CONTROLS
-            || self.title.is_none()
-            || self.screen == Screen::Options
-            || self.pad.mod_browser.is_some()
-        {
-            return None;
+    /// The Mods page's Get Mods button (options.rs, startup_menu.rs): the
+    /// mods screen opens over the options. Touch only (iOS).
+    pub(super) fn open_mods(&mut self) {
+        if !super::touch::TOUCH_CONTROLS || self.pad.mod_browser.is_some() {
+            return;
         }
-        let safe = self.mods_safe(batch);
-        Some(Area {
-            x: safe.x + safe.w - 70.0 - GAP,
-            y: safe.y + GAP,
-            w: 70.0,
-            h: BAR,
-        })
+        log::info!("Horizon: opening the mods screen");
+        self.pad.mod_browser = Some(ModBrowser::open());
     }
 
-    /// A touch for the mods screen or its button: `true` when it took it.
+    /// A touch for the mods screen: `true` when it took it.
     pub(super) fn mods_touch(&mut self, touch: &Touch) -> bool {
+        if self.pad.mod_browser.is_none() {
+            return false;
+        }
         let Some(batch) = self.gui_scale() else {
             return false;
         };
@@ -329,16 +324,6 @@ impl Game<'_> {
             touch.location.x as f32 / batch.scale,
             touch.location.y as f32 / batch.scale,
         );
-        if self.pad.mod_browser.is_none() {
-            if touch.phase == TouchPhase::Started
-                && self.get_mods_button(&batch).is_some_and(|b| b.contains(at))
-            {
-                log::info!("Horizon: opening the mods screen");
-                self.pad.mod_browser = Some(ModBrowser::open());
-                return true;
-            }
-            return false;
-        }
         let f = frame(self.mods_safe(&batch));
         let game_dir = horizon_client::logging::player_dir();
         // The Native tab's button may paste the token: read the clipboard first.
@@ -561,19 +546,9 @@ impl Game<'_> {
         browser.want_issue();
     }
 
-    /// The title screen's button, or the mods screen over everything.
+    /// The mods screen over everything.
     pub(super) fn draw_mods(&self, batch: &mut HudBatch) {
         let atlas = &self.gui.atlas;
-        if let Some(b) = self.get_mods_button(batch) {
-            batch.fill(atlas, b.x, b.y, b.w, b.h, BUTTON);
-            centred(
-                batch,
-                atlas,
-                &horizon_client::lang::get("horizon.mods.get_mods"),
-                b,
-                INK,
-            );
-        }
         let Some(browser) = self.pad.mod_browser.as_ref() else {
             return;
         };
