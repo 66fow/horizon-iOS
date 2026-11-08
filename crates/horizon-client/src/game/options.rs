@@ -420,6 +420,7 @@ impl Game<'_> {
                     let _ = std::fs::create_dir_all(&dir);
                     super::packs::open_folder(&dir);
                 }
+                Event::GetMods => self.open_mods(),
                 Event::OpenModFolder => {
                     let dir = Self::game_dir().join(horizon_client::mod_list::DIR);
                     let _ = std::fs::create_dir_all(&dir);
