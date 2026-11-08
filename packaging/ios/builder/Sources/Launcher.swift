@@ -310,6 +310,7 @@ func hm_certificate(_ p12: UnsafePointer<UInt8>?, _ p12Len: Int, _ password: Uns
 
 /// The certificate, in Settings.
 struct CertificatePlate: View {
+    @EnvironmentObject var store: Store
     /// Owned by Settings, whose root opens the file picker (a picker on a view deep in a
     /// ScrollView may not open, and can't be reached from the Files share sheet).
     @Binding var importing: Bool
@@ -401,6 +402,16 @@ struct CertificatePlate: View {
                 .font(.geist(12)).foregroundStyle(Theme.ink(0.55))
         }
         .onReceive(NotificationCenter.default.publisher(for: .certificateImported)) { _ in cert = Certificate.stored }
+        .onChange(of: store.demoCertificate) { stage in
+            if stage == 1 {
+                picked = Data("tutorial".utf8)
+                password = "••••••••"
+            } else if stage == 2 {
+                picked = nil
+                password = ""
+                cert = Certificate(p12: Data("tutorial".utf8), password: "tutorial")
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
             documents = Certificate.inDocuments()
         }

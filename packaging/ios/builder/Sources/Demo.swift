@@ -59,10 +59,11 @@ enum Demo {
         }
         switch part {
         case "settings":
+            let repo = store.repo, token = store.token
+            defer { store.repo = repo; store.token = token; store.demoCertificate = 0 }
             store.tab = .settings
             store.repo = ""
             store.token = ""
-            Certificate.save(nil)
             await wait(2.5)
             await type("yourname/horizon-iOS") { store.repo = $0 }
             await wait(1.5)
@@ -74,13 +75,13 @@ enum Demo {
             await wait(2)
             store.demoScroll = "certificate"
             await wait(3)
-            Certificate.pendingFile = Data("tutorial".utf8)
-            NotificationCenter.default.post(name: .certificateFile, object: nil)
-            await wait(3)
-            Certificate.save(Certificate(p12: Data("tutorial".utf8), password: "tutorial"))
-            NotificationCenter.default.post(name: .certificateImported, object: nil)
-            await wait(4)
+            store.demoCertificate = 1
+            await wait(3.5)
+            store.demoCertificate = 2
+            await wait(5)
         case "mods":
+            let before = store.picked
+            defer { store.picked = before }
             store.tab = .mods
             store.picked = []
             for _ in 0..<40 where store.mods.isEmpty { await wait(0.5) }

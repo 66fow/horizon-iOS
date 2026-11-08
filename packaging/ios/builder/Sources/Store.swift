@@ -17,6 +17,8 @@ final class Store: ObservableObject {
     @Published var demoDetail: String?
     /// The tutorial recording opens the build sheet with this (Demo.swift).
     @Published var demoBuildSheet = false
+    /// The tutorial's certificate step: 1 asks the password of a picked .p12, 2 shows it imported.
+    @Published var demoCertificate = 0
     /// `-HorizonTutorial <part>`: recording the install tutorial (Demo.swift). GitHub is asked without
     /// a token then, as the one shown is made up.
     static let tutorial = UserDefaults.standard.string(forKey: "HorizonTutorial")
