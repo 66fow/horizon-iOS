@@ -90,3 +90,12 @@ inherits = "release"
 lto = false
 codegen-units = 16
 incremental = true
+
+# The iPhone/iPad build (.github/workflows/ios-build.yml): `fast` has no LTO, 16 codegen units
+# and incremental on, which costs the game's own speed (no inlining across crates). This keeps
+# thin LTO but with a few codegen units so the CI build stays well inside its time limit.
+[profile.ios]
+inherits = "release"
+lto = "thin"
+codegen-units = 4
+incremental = false
