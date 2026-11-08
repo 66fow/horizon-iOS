@@ -1,8 +1,11 @@
 //! The touch screen (iOS, which sends touches and no mouse). Over menus, the
 //! first finger is the mouse; while playing, the on-screen controls
-//! (`horizon_client_input::touch`) act as a virtual controller: its buttons
-//! are the ones bound in the controller settings, its stick the left stick.
-//! Dragging the view turns it like the mouse does. The Edit button opens the
+//! (`horizon_client_input::touch`) press the actions the controller settings
+//! bind to their buttons and feed the left stick, but they are not a
+//! controller: they never make the game think a pad is in use (no pad cursor
+//! or glyphs in the menus they open). Sneak goes straight to the game's
+//! Sneak option (Toggle or Hold). Dragging the view turns it like the mouse
+//! does, at the Mouse Sensitivity option. The Edit button opens the
 //! layout editor; its layout is kept in `touch-controls.txt` beside
 //! `options.txt`.
 use super::*;
@@ -71,6 +74,20 @@ impl Game<'_> {
         ))
     }
 
+    /// The layout for a finger that is already down (it moves or lifts): the
+    /// one of the last frame, so a drag costs no window queries and no layout
+    /// per event. A finger coming down always gets a fresh one.
+    fn touch_layout_for(&mut self, phase: TouchPhase) -> Option<(Layout, f32)> {
+        if phase != TouchPhase::Started
+            && let Some(cached) = self.pad.touch_layout.clone()
+        {
+            return Some(cached);
+        }
+        let fresh = self.touch_layout()?;
+        self.pad.touch_layout = Some(fresh.clone());
+        Some(fresh)
+    }
+
     /// The saved layout, read once.
     fn touch_load(&mut self) {
         if self.pad.touch_loaded {
@@ -91,11 +108,13 @@ impl Game<'_> {
     /// The Esc button: always top left in the safe area, on every screen, as
     /// the keyboard's Escape (a touch screen has no key for it). Playing, it
     /// opens the pause menu (where Save and Quit leaves the world); over a
-    /// menu (an inventory, a crafting table, chat, the options, a world list)
-    /// it closes it or goes back. Not while the layout editor or the mods
-    /// screen is open (their Done and Close close them).
+    /// menu (an inventory, a crafting table, chat, the options) it closes it
+    /// or goes back. Not on the main screen (the title and the menus over it
+    /// have their own Back and Done buttons), and not while the layout editor
+    /// or the mods screen is open (their Done and Close close them).
     fn touch_close_button(&self, batch: &HudBatch) -> Option<Area> {
         if !TOUCH_CONTROLS
+            || self.title.is_some()
             || self.pad.mod_browser.is_some()
             || (self.pad.touch.editing() && !self.pad_in_menu())
         {
@@ -175,7 +194,7 @@ impl Game<'_> {
         }
         if !mouse
             && self.touch_playing()
-            && let Some((layout, scale)) = self.touch_layout()
+            && let Some((layout, scale)) = self.touch_layout_for(touch.phase)
         {
             let at = (
                 touch.location.x as f32 / scale,
@@ -190,6 +209,11 @@ impl Game<'_> {
                     at.0,
                     at.1
                 );
+            }
+            if touch.phase == TouchPhase::Started {
+                // A finger on the controls is not a controller: a menu it opens
+                // (the inventory, chat) is the finger's, not a pad's focus.
+                self.pad.in_use = false;
             }
             self.pad
                 .touch
@@ -218,18 +242,24 @@ impl Game<'_> {
         let layout = self
             .touch_layout()
             .filter(|_| self.touch_playing())
-            .map(|(layout, _)| layout);
+            .map(|(layout, scale)| {
+                self.pad.touch_layout = Some((layout.clone(), scale));
+                layout
+            });
         let Some(layout) = layout else {
             if self.pad.touch.active() {
                 self.pad.touch.release_all();
             }
+            self.pad.touch_layout = None;
             self.pad.touch_state = PadState::default();
+            self.touch_sneak(false);
             return;
         };
-        // The controller's toggle sneak flips sneaking itself on each press.
-        self.pad.touch.sneak_taps =
-            self.settings.controller.toggle_sneak && !self.settings.toggle_crouch;
+        // Sneak follows the game's own Sneak option (Toggle or Hold), not the
+        // controller's toggle sneak: the touch button is a key, not a pad.
+        self.pad.touch.sneak_taps = self.settings.toggle_crouch;
         let frame = self.pad.touch.frame(&layout, Instant::now());
+        self.touch_sneak(frame.held.contains(&TouchButton::Sneak));
         let mut state = PadState {
             left: frame.stick,
             ..PadState::default()
@@ -258,6 +288,16 @@ impl Game<'_> {
             }
         }
         for held in frame.held {
+            // Sneak went to the game above. With Toggle sprint the game flips
+            // sprinting on each press, so a stick pushed forward again must
+            // not press it while it is already on (that would switch it off).
+            if held == TouchButton::Sneak
+                || (held == TouchButton::Sprint
+                    && self.settings.toggle_sprint
+                    && self.keys.contains(&KeyCode::ControlLeft))
+            {
+                continue;
+            }
             let button = match held.action() {
                 Some(action) => self.settings.controller.binding(action),
                 None if held == TouchButton::Pause => Some(Button::Start),
@@ -272,15 +312,39 @@ impl Game<'_> {
         }
         self.pad.touch_state = state;
         if frame.look != (0.0, 0.0) {
+            // Like the mouse: Mouse Sensitivity (and the spyglass's slower
+            // turn) scale the drag, and Invert Mouse flips it.
+            let look = self.look_options();
+            let scale = horizon_client::mouse::degrees_per_count(look) / 0.15;
+            let flip = |inverted: bool| if inverted { -1.0 } else { 1.0 };
             self.look_turn(
-                f64::from(frame.look.0) * LOOK_SPEED,
-                f64::from(frame.look.1) * LOOK_SPEED,
+                f64::from(frame.look.0) * LOOK_SPEED * scale * flip(look.invert_x),
+                f64::from(frame.look.1) * LOOK_SPEED * scale * flip(look.invert_y),
             );
         }
         if let Some(slot) = frame.slot
             && !self.spectator()
         {
             self.hotbar_presses.push(slot);
+        }
+    }
+
+    /// The Sneak button as the sneak key, pressed and released on its edges:
+    /// the game's own Sneak option makes it a toggle or a hold
+    /// (`ToggleKeyMapping`), as for the keyboard's Shift.
+    fn touch_sneak(&mut self, down: bool) {
+        if down == self.pad.touch_sneak {
+            return;
+        }
+        self.pad.touch_sneak = down;
+        if let Err(e) = self.mapped_key(
+            KeyCode::ShiftLeft,
+            down,
+            false,
+            KeyCode::ShiftLeft,
+            Source::Pad,
+        ) {
+            log::warn!("Horizon: touch sneak: {e}");
         }
     }
 
@@ -318,7 +382,9 @@ impl Game<'_> {
         for item in layout.items.iter().filter(|i| !i.hidden) {
             match item.control {
                 Control::Button(button) => {
-                    let pressed = if button == TouchButton::Sneak && self.pad.touch.sneak_taps {
+                    let pressed = if button == TouchButton::Sneak {
+                        // The game's state: lit while sneaking, with Toggle after
+                        // the finger lifted too.
                         self.keys.contains(&KeyCode::ShiftLeft)
                     } else {
                         self.pad.touch.pressed(button)
