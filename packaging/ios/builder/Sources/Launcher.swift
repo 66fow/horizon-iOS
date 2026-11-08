@@ -184,6 +184,17 @@ struct Certificate {
         return data.flatMap { $0.isEmpty ? nil : $0 }
     }
 
+    /// The .p12 files in Documents (On My iPhone > Horizon Mods), newest first.
+    static func inDocuments() -> [URL] {
+        let folder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let files = (try? FileManager.default.contentsOfDirectory(
+            at: folder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+        func date(_ url: URL) -> Date {
+            (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+        }
+        return files.filter { ["p12", "pfx"].contains($0.pathExtension.lowercased()) }.sorted { date($0) > date($1) }
+    }
+
     static func request(from app: String) -> URL? {
         URL(string: "\(app)://certificate?callback_template=horizonmods%3A%2F%2Fcertificate%3Fcert%3D%24%28BASE64_CERT%29%26password%3D%24%28PASSWORD%29")
     }
@@ -255,6 +266,8 @@ struct CertificatePlate: View {
     var problem: String?
     @State private var cert = Certificate.stored
     @State private var password = ""
+    /// The .p12s in Documents, looked at again whenever the app comes back from Files.
+    @State private var documents = Certificate.inDocuments()
 
     var body: some View {
         Plate("Signing certificate") {
@@ -301,7 +314,20 @@ struct CertificatePlate: View {
             if let problem, picked == nil {
                 Text(problem).font(.geist(13)).foregroundStyle(Theme.warn)
             }
-            Text("Or in Files, long-press the .p12, tap Share and pick Horizon Mods.")
+            // .p12s the player put in On My iPhone > Horizon Mods: no picker needed.
+            ForEach(documents, id: \.self) { url in
+                Button {
+                    picked = Certificate.read(url)
+                } label: {
+                    HStack(spacing: 6) {
+                        HIcon(name: "tick-02", size: 16)
+                        Text("Use \(url.lastPathComponent)").lineLimit(1).truncationMode(.middle)
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(QuietButton())
+            }
+            Text("Or copy the .p12 into On My iPhone > Horizon Mods in Files, then come back here: it shows up above.")
                 .font(.geist(12)).foregroundStyle(Theme.ink(0.55))
             if picked != nil {
                 FieldBox {
@@ -323,10 +349,40 @@ struct CertificatePlate: View {
                 .font(.geist(12)).foregroundStyle(Theme.ink(0.55))
         }
         .onReceive(NotificationCenter.default.publisher(for: .certificateImported)) { _ in cert = Certificate.stored }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+            documents = Certificate.inDocuments()
+        }
+        .onAppear { documents = Certificate.inDocuments() }
     }
 }
 
 extension Notification.Name {
     static let certificateImported = Notification.Name("HorizonModsCertificateImported")
     static let certificateFile = Notification.Name("HorizonModsCertificateFile")
+}
+
+
+/// UIKit's document picker for one file of any kind, copied into the app before it's handed over.
+struct DocumentPicker: UIViewControllerRepresentable {
+    let done: (URL?) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(done: done) }
+
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.item], asCopy: true)
+        picker.allowsMultipleSelection = false
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ picker: UIDocumentPickerViewController, context: Context) {}
+
+    final class Coordinator: NSObject, UIDocumentPickerDelegate {
+        let done: (URL?) -> Void
+        init(done: @escaping (URL?) -> Void) { self.done = done }
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+            done(urls.first)
+        }
+        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { done(nil) }
+    }
 }

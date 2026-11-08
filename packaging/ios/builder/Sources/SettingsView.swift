@@ -133,16 +133,17 @@ struct SettingsView: View {
         }
         .scrollDismissesKeyboard(.interactively)
         // Any file: a .p12 from another app or iCloud doesn't always carry the PKCS #12 type.
-        .fileImporter(isPresented: $importingCertificate, allowedContentTypes: [.item]) { result in
-            switch result {
-            case .success(let url):
+        // UIKit's own picker, copying the file in: SwiftUI's picker left a .p12 untappable.
+        .sheet(isPresented: $importingCertificate) {
+            DocumentPicker { url in
+                importingCertificate = false
+                guard let url else { return }
                 certificateFile = Certificate.read(url)
                 certificateProblem = certificateFile == nil
-                    ? "Couldn't read \(url.lastPathComponent). Copy it to On My iPhone in Files, then pick it there."
+                    ? "Couldn't read \(url.lastPathComponent). Put it in On My iPhone > Horizon Mods instead."
                     : nil
-            case .failure(let error):
-                certificateProblem = "Couldn't open the file: \(error.localizedDescription)"
             }
+            .ignoresSafeArea()
         }
         .onAppear(perform: takePendingFile)
         .onReceive(NotificationCenter.default.publisher(for: .certificateFile)) { _ in takePendingFile() }
