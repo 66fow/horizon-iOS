@@ -22,5 +22,10 @@ lto = "thin"
 codegen-units = 1
 panic = "abort"
 
+# pkcs5 0.7.1 with one change (vendor/pkcs5/src/pbes2/kdf.rs): a .p12 whose PBKDF2 PRF leaves its
+# NULL parameters out is read, as iOS and OpenSSL read it, instead of failing as malformed.
+[patch.crates-io]
+pkcs5 = { path = "vendor/pkcs5" }
+
 # Its own workspace: not part of the game's.
 [workspace]

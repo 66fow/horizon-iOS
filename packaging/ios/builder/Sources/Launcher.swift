@@ -221,7 +221,11 @@ enum Signer {
     /// every .p12 an iPhone can install, so it goes first: the certificate and its RSA key go to the
     /// signer as DER in a small "HMDER1" envelope (signer/src/lib.rs). Only if iOS can't read it
     /// (not a wrong password) do the signer's own .p12 readers get the file itself.
+    /// Why iOS couldn't open the last .p12, said after the signer's own error if that fails too.
+    nonisolated(unsafe) static var iosProblem = ""
+
     static func signingData(_ certificate: Certificate) -> Result<Data, Failure> {
+        iosProblem = ""
         var items: CFArray?
         let options = [kSecImportExportPassphrase as String: certificate.password] as CFDictionary
         let status = SecPKCS12Import(certificate.p12 as CFData, options, &items)
@@ -230,7 +234,10 @@ enum Signer {
         }
         guard status == errSecSuccess,
               let first = (items as? [[String: Any]])?.first,
-              let any = first[kSecImportItemIdentity as String] else { return .success(certificate.p12) }
+              let any = first[kSecImportItemIdentity as String] else {
+            iosProblem = " (iOS: status \(status))"
+            return .success(certificate.p12)
+        }
         let identity = any as! SecIdentity
         var cert: SecCertificate?
         var key: SecKey?
@@ -239,6 +246,7 @@ enum Signer {
               (SecKeyCopyAttributes(key) as? [String: Any])?[kSecAttrKeyType as String] as? String
                 == kSecAttrKeyTypeRSA as String,
               let keyData = SecKeyCopyExternalRepresentation(key, nil) as Data? else {
+            iosProblem = " (iOS: opened it, but couldn't hand over its RSA key)"
             return .success(certificate.p12)
         }
         let certData = SecCertificateCopyData(cert) as Data
@@ -259,7 +267,7 @@ enum Signer {
             hm_prepare(input.path, output.path, p12.bindMemory(to: UInt8.self).baseAddress, p12.count,
                        certificate.password, identifier, &error, error.count)
         }
-        if code != 0 { throw Failure(message: "Signing the build failed: " + String(cString: error)) }
+        if code != 0 { throw Failure(message: "Signing the build failed: " + String(cString: error) + iosProblem) }
         #endif
     }
 
@@ -277,7 +285,7 @@ enum Signer {
             hm_certificate(p12.bindMemory(to: UInt8.self).baseAddress, p12.count, certificate.password, &out, out.count)
         }
         let text = String(cString: out)
-        guard code == 0 else { return .failure(Failure(message: text)) }
+        guard code == 0 else { return .failure(Failure(message: text + iosProblem)) }
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         return .success((lines.first ?? "", lines.count > 1 ? lines[1] : "", lines.count > 2 ? lines[2] : ""))
         #endif

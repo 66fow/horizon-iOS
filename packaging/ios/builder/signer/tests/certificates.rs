@@ -5,10 +5,13 @@ use horizon_mods_signer::{certificate, load};
 
 const CLASSIC: &[u8] = include_bytes!("fixtures/classic.p12");
 const MODERN: &[u8] = include_bytes!("fixtures/modern.p12");
+/// MODERN with its PBKDF2 PRFs' NULL parameters left out (and its MAC made again), as some
+/// certificate sellers' .p12s are: pkcs5 alone calls that "malformed ASN.1 DER value for NULL".
+const NO_PRF_NULL: &[u8] = include_bytes!("fixtures/no-prf-null.p12");
 
 #[test]
 fn both_formats_open_with_their_password() {
-    for p12 in [CLASSIC, MODERN] {
+    for p12 in [CLASSIC, MODERN, NO_PRF_NULL] {
         let (name, team, _) = certificate(p12, "horizon").unwrap();
         assert_eq!(name, "Apple Development: Horizon Test (ABCDE12345)");
         assert_eq!(team, "ABCDE12345");
@@ -19,7 +22,7 @@ fn both_formats_open_with_their_password() {
 
 #[test]
 fn a_wrong_password_says_so() {
-    for p12 in [CLASSIC, MODERN] {
+    for p12 in [CLASSIC, MODERN, NO_PRF_NULL] {
         let error = certificate(p12, "not it").unwrap_err();
         assert!(error.to_lowercase().contains("password"), "{error}");
     }
