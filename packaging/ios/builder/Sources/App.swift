@@ -34,6 +34,7 @@ struct HorizonModsApp: App {
 struct RootView: View {
     @EnvironmentObject var store: Store
     @EnvironmentObject var maker: Maker
+    @EnvironmentObject var library: Library
     @Environment(\.scenePhase) private var phase
 
     var body: some View {
