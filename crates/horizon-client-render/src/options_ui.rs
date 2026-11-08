@@ -1332,6 +1332,8 @@ enum Act {
     NativeKey(usize, usize),
     NativeButton(usize, usize),
     OpenModFolder,
+    /// The Mods page's Get Mods button (iOS): open the mods screen.
+    GetMods,
     /// Accessibility's "Accessibility Help" link
     /// (`AccessibilityOptionsScreen.addFooter`'s openLinkButton).
     AccessibilityHelp,
@@ -1468,6 +1470,8 @@ pub enum Event {
     /// Data Packs' Open Pack Folder: create the folder if needed and open it.
     OpenDataPackFolder(std::path::PathBuf),
     OpenModFolder,
+    /// The Mods page's Get Mods button (iOS, which has no launcher): open the mods screen.
+    GetMods,
     /// Accessibility's Help link: confirm and open
     /// `CommonLinks.ACCESSIBILITY_HELP` over the options screen.
     AccessibilityHelp,
@@ -2857,10 +2861,23 @@ impl OptionsUi {
             }
             Page::Font => pairs(&[Opt::ForceUnicode, Opt::JapaneseGlyphs]),
             Page::Mods => {
+                // iOS has no launcher to get mods from: the mods screen opens from
+                // this page's Get Mods button (it used to sit on the title screen).
+                let mut rows = Vec::new();
                 if s.mods.installed.is_empty() {
-                    return vec![Row::Header("horizon.mods.empty")];
+                    rows.push(Row::Header("horizon.mods.empty"));
                 }
-                s.mods
+                if cfg!(target_os = "ios") {
+                    rows.push(Row::Buttons(
+                        button(0.0, 0.0, 310.0, tr("horizon.mods.get_mods"), Act::GetMods),
+                        None,
+                    ));
+                }
+                if s.mods.installed.is_empty() {
+                    return rows;
+                }
+                let installed_rows: Vec<Row> = s
+                    .mods
                     .installed
                     .iter()
                     .enumerate()
@@ -2910,7 +2927,9 @@ impl OptionsUi {
                             Row::Buttons(if dead { inactive(widget) } else { widget }, None)
                         }
                     })
-                    .collect()
+                    .collect();
+                rows.extend(installed_rows);
+                rows
             }
             Page::NativeMod(i) => self.native_rows(s, i),
             Page::ShaderPacks => {
@@ -4297,6 +4316,7 @@ impl OptionsUi {
                         }
                         Act::NativeButton(i, b) => events.push(Event::NativeButton(i, b)),
                         Act::OpenModFolder => events.push(Event::OpenModFolder),
+                        Act::GetMods => events.push(Event::GetMods),
                         Act::PvpPreset => {
                             crate::pvp::apply_preset(s);
                             events.push(Event::Changed);
@@ -5259,6 +5279,7 @@ impl OptionsUi {
                         }
                         Act::NativeButton(i, b) => events.push(Event::NativeButton(i, b)),
                         Act::OpenModFolder => events.push(Event::OpenModFolder),
+                        Act::GetMods => events.push(Event::GetMods),
                         Act::PvpPreset => {
                             crate::pvp::apply_preset(s);
                             events.push(Event::Changed);
@@ -8591,3 +8612,4 @@ mod tests {
         }
     }
 }
+                          
