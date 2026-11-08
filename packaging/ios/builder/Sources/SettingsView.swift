@@ -5,6 +5,8 @@ struct SettingsView: View {
     @EnvironmentObject var store: Store
     @State private var checking = false
     @State private var check: (ok: Bool, text: String)?
+    @State private var importingCertificate = false
+    @State private var certificateFile: Data?
 
     var body: some View {
         ScrollView {
@@ -85,7 +87,7 @@ struct SettingsView: View {
                         .foregroundStyle(Theme.ink(0.55))
                 }
 
-                CertificatePlate()
+                CertificatePlate(importing: $importingCertificate, picked: $certificateFile)
 
                 AIAccounts()
 
@@ -129,6 +131,19 @@ struct SettingsView: View {
             .padding(.bottom, 16)
         }
         .scrollDismissesKeyboard(.interactively)
+        // Any file: a .p12 from another app or iCloud doesn't always carry the PKCS #12 type.
+        .fileImporter(isPresented: $importingCertificate, allowedContentTypes: [.item]) { result in
+            if case .success(let url) = result { certificateFile = Certificate.read(url) }
+        }
+        .onAppear(perform: takePendingFile)
+        .onReceive(NotificationCenter.default.publisher(for: .certificateFile)) { _ in takePendingFile() }
+    }
+
+    private func takePendingFile() {
+        if let data = Certificate.pendingFile {
+            certificateFile = data
+            Certificate.pendingFile = nil
+        }
     }
 }
 

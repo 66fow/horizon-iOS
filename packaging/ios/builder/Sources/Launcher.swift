@@ -168,6 +168,22 @@ struct Certificate {
     }
 
     /// The link that asks SideStore or AltStore to hand Horizon Mods its certificate.
+    /// A .p12 opened from Files (the share sheet, or "Choose a .p12 file") that waits for its
+    /// password on Settings.
+    static var pendingFile: Data?
+
+    /// Reads a file the player picked or shared, which may sit in iCloud or another app's folder.
+    static func read(_ url: URL) -> Data? {
+        let open = url.startAccessingSecurityScopedResource()
+        defer { if open { url.stopAccessingSecurityScopedResource() } }
+        var data: Data?
+        var error: NSError?
+        NSFileCoordinator().coordinate(readingItemAt: url, options: [], error: &error) { url in
+            data = try? Data(contentsOf: url)
+        }
+        return data.flatMap { $0.isEmpty ? nil : $0 }
+    }
+
     static func request(from app: String) -> URL? {
         URL(string: "\(app)://certificate?callback_template=horizonmods%3A%2F%2Fcertificate%3Fcert%3D%24%28BASE64_CERT%29%26password%3D%24%28PASSWORD%29")
     }
@@ -231,10 +247,12 @@ func hm_certificate(_ p12: UnsafePointer<UInt8>?, _ p12Len: Int, _ password: Uns
 
 /// The certificate, in Settings.
 struct CertificatePlate: View {
+    /// Owned by Settings, whose root opens the file picker (a picker on a view deep in a
+    /// ScrollView may not open, and can't be reached from the Files share sheet).
+    @Binding var importing: Bool
+    @Binding var picked: Data?
     @State private var cert = Certificate.stored
-    @State private var importing = false
     @State private var password = ""
-    @State private var picked: Data?
 
     var body: some View {
         Plate("Signing certificate") {
@@ -263,11 +281,23 @@ struct CertificatePlate: View {
             HStack(spacing: 8) {
                 ForEach(["SideStore", "AltStore"], id: \.self) { app in
                     if let url = Certificate.request(from: app.lowercased()) {
-                        Link(destination: url) { Text("From \(app)") }.buttonStyle(QuietButton())
+                        Link(destination: url) { Text("From \(app)").frame(maxWidth: .infinity) }
+                            .buttonStyle(QuietButton())
                     }
                 }
-                Button(".p12 file") { importing = true }.buttonStyle(QuietButton())
             }
+            Button {
+                importing = true
+            } label: {
+                HStack(spacing: 6) {
+                    HIcon(name: "upload-04", size: 16)
+                    Text("Choose a .p12 file")
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(QuietButton())
+            Text("Or in Files, long-press the .p12, tap Share and pick Horizon Mods.")
+                .font(.geist(12)).foregroundStyle(Theme.ink(0.55))
             if picked != nil {
                 FieldBox {
                     SecureField("", text: $password, prompt: Text("The .p12's password").foregroundColor(Theme.ink(0.4)))
@@ -287,17 +317,11 @@ struct CertificatePlate: View {
             Text("When SideStore or AltStore makes a new certificate (a free Apple ID's can change), import it again: builds are signed again the next time they're played.")
                 .font(.geist(12)).foregroundStyle(Theme.ink(0.55))
         }
-        .fileImporter(isPresented: $importing, allowedContentTypes: [.pkcs12, .data]) { result in
-            if case .success(let url) = result {
-                let open = url.startAccessingSecurityScopedResource()
-                defer { if open { url.stopAccessingSecurityScopedResource() } }
-                picked = try? Data(contentsOf: url)
-            }
-        }
         .onReceive(NotificationCenter.default.publisher(for: .certificateImported)) { _ in cert = Certificate.stored }
     }
 }
 
 extension Notification.Name {
     static let certificateImported = Notification.Name("HorizonModsCertificateImported")
+    static let certificateFile = Notification.Name("HorizonModsCertificateFile")
 }

@@ -89,6 +89,22 @@
 	</array>
 	<!-- Files shows Documents (On My iPhone > Horizon Mods): the game files every build shares
 	     (resources/), the builds (Builds/), worlds, mods and packs. -->
+	<!-- A signing certificate (.p12) shared from Files opens here (Settings asks its password). -->
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Signing certificate</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.rsa.pkcs-12</string>
+			</array>
+		</dict>
+	</array>
 	<key>UIFileSharingEnabled</key>
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>

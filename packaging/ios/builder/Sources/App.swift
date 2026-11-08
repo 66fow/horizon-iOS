@@ -55,6 +55,11 @@ struct RootView: View {
                 Certificate.save(cert)
                 NotificationCenter.default.post(name: .certificateImported, object: nil)
                 store.tab = .settings
+            } else if url.isFileURL, let data = Certificate.read(url) {
+                // A .p12 shared from Files: Settings asks for its password.
+                Certificate.pendingFile = data
+                store.tab = .settings
+                NotificationCenter.default.post(name: .certificateFile, object: nil)
             }
         }
         // Builds are checked while the app is open: often while one runs, rarely otherwise.
