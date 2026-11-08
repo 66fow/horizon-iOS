@@ -3,6 +3,7 @@ import Darwin
 import Foundation
 import MachO
 import ObjectiveC
+import Security
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
@@ -216,12 +217,45 @@ enum Signer {
         var errorDescription: String? { message }
     }
 
+    /// The certificate and key as the signer takes them. iOS's own reader (SecPKCS12Import) opens
+    /// every .p12 an iPhone can install, so it goes first: the certificate and its RSA key go to the
+    /// signer as DER in a small "HMDER1" envelope (signer/src/lib.rs). Only if iOS can't read it
+    /// (not a wrong password) do the signer's own .p12 readers get the file itself.
+    static func signingData(_ certificate: Certificate) -> Result<Data, Failure> {
+        var items: CFArray?
+        let options = [kSecImportExportPassphrase as String: certificate.password] as CFDictionary
+        let status = SecPKCS12Import(certificate.p12 as CFData, options, &items)
+        if status == errSecAuthFailed || status == errSecPkcs12VerifyFailure {
+            return .failure(Failure(message: "The password is wrong for this .p12."))
+        }
+        guard status == errSecSuccess,
+              let first = (items as? [[String: Any]])?.first,
+              let any = first[kSecImportItemIdentity as String] else { return .success(certificate.p12) }
+        let identity = any as! SecIdentity
+        var cert: SecCertificate?
+        var key: SecKey?
+        guard SecIdentityCopyCertificate(identity, &cert) == errSecSuccess, let cert,
+              SecIdentityCopyPrivateKey(identity, &key) == errSecSuccess, let key,
+              (SecKeyCopyAttributes(key) as? [String: Any])?[kSecAttrKeyType as String] as? String
+                == kSecAttrKeyTypeRSA as String,
+              let keyData = SecKeyCopyExternalRepresentation(key, nil) as Data? else {
+            return .success(certificate.p12)
+        }
+        let certData = SecCertificateCopyData(cert) as Data
+        func length(_ n: Int) -> Data { withUnsafeBytes(of: UInt32(n).littleEndian) { Data($0) } }
+        var blob = Data("HMDER1".utf8)
+        blob.append(length(certData.count)); blob.append(certData)
+        blob.append(length(keyData.count)); blob.append(keyData)
+        return .success(blob)
+    }
+
     static func prepare(input: URL, output: URL, certificate: Certificate, identifier: String) throws {
         #if targetEnvironment(simulator)
         throw Failure(message: "Builds play on an iPhone, not in the simulator.")
         #else
+        let data = try signingData(certificate).get()
         var error = [CChar](repeating: 0, count: 1024)
-        let code = certificate.p12.withUnsafeBytes { p12 in
+        let code = data.withUnsafeBytes { p12 in
             hm_prepare(input.path, output.path, p12.bindMemory(to: UInt8.self).baseAddress, p12.count,
                        certificate.password, identifier, &error, error.count)
         }
@@ -233,8 +267,13 @@ enum Signer {
         #if targetEnvironment(simulator)
         return .failure(Failure(message: "Certificates are read on an iPhone."))
         #else
+        let data: Data
+        switch signingData(certificate) {
+        case .success(let d): data = d
+        case .failure(let e): return .failure(e)
+        }
         var out = [CChar](repeating: 0, count: 1024)
-        let code = certificate.p12.withUnsafeBytes { p12 in
+        let code = data.withUnsafeBytes { p12 in
             hm_certificate(p12.bindMemory(to: UInt8.self).baseAddress, p12.count, certificate.password, &out, out.count)
         }
         let text = String(cString: out)

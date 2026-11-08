@@ -129,6 +129,9 @@ pub fn patch(mut d: Vec<u8>) -> Result<Vec<u8>, String> {
 /// sellers hand out. apple-codesign's own reader knows only the classic one, and stops the program
 /// on any other MAC, so it is only tried for an encryption p12-keystore doesn't know.
 pub fn load(p12: &[u8], password: &str) -> Result<(CapturedX509Certificate, InMemoryPrivateKey), String> {
+    if let Some(rest) = p12.strip_prefix(b"HMDER1") {
+        return from_der(rest);
+    }
     use p12_keystore::error::Error;
     let store = match p12_keystore::KeyStore::from_pkcs12(p12, password) {
         Ok(store) => store,
@@ -145,6 +148,48 @@ pub fn load(p12: &[u8], password: &str) -> Result<(CapturedX509Certificate, InMe
     let cert = CapturedX509Certificate::from_der(leaf.as_der().to_vec()).map_err(|e| e.to_string())?;
     let key = InMemoryPrivateKey::from_pkcs8_der(chain.key()).map_err(|e| e.to_string())?;
     Ok((cert, key))
+}
+
+/// What Horizon Mods sends once iOS has opened the .p12 itself (Signer.signingData): "HMDER1", then
+/// the certificate's DER and the RSA key's PKCS #1 DER, each after its length (u32, little-endian).
+fn from_der(d: &[u8]) -> Result<(CapturedX509Certificate, InMemoryPrivateKey), String> {
+    fn part<'a>(d: &mut &'a [u8]) -> Result<&'a [u8], String> {
+        let bad = || "the certificate from iOS is cut short".to_string();
+        let n = u32::from_le_bytes(d.get(..4).ok_or_else(bad)?.try_into().unwrap()) as usize;
+        let out = d.get(4..4 + n).ok_or_else(bad)?;
+        *d = &d[4 + n..];
+        Ok(out)
+    }
+    let mut d = d;
+    let cert = part(&mut d)?;
+    let key = part(&mut d)?;
+    let cert = CapturedX509Certificate::from_der(cert.to_vec()).map_err(|e| e.to_string())?;
+    let key = InMemoryPrivateKey::from_pkcs8_der(pkcs8_rsa(key)).map_err(|e| e.to_string())?;
+    Ok((cert, key))
+}
+
+/// An RSA key's PKCS #1 DER (what iOS exports) wrapped as PKCS #8: version 0, rsaEncryption, the key.
+fn pkcs8_rsa(pkcs1: &[u8]) -> Vec<u8> {
+    fn tlv(tag: u8, body: &[u8]) -> Vec<u8> {
+        let mut out = vec![tag];
+        let n = body.len();
+        if n < 0x80 {
+            out.push(n as u8);
+        } else {
+            let bytes: Vec<u8> = n.to_be_bytes().into_iter().skip_while(|b| *b == 0).collect();
+            out.push(0x80 | bytes.len() as u8);
+            out.extend(bytes);
+        }
+        out.extend_from_slice(body);
+        out
+    }
+    let algorithm = [
+        0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05, 0x00,
+    ];
+    let mut body = vec![0x02, 0x01, 0x00];
+    body.extend_from_slice(&algorithm);
+    body.extend(tlv(0x04, pkcs1));
+    tlv(0x30, &body)
 }
 
 /// The certificate in `p12`: its subject's common name, its team and when it stops working.

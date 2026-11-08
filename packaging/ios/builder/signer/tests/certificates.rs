@@ -24,3 +24,21 @@ fn a_wrong_password_says_so() {
         assert!(error.to_lowercase().contains("password"), "{error}");
     }
 }
+
+/// What Horizon Mods sends after iOS opened the .p12: the certificate and the key's PKCS #1 DER.
+/// `cert.der` and `key.der` are the fixtures' certificate and key, exported with openssl.
+#[test]
+fn a_certificate_ios_opened_signs_too() {
+    let cert = include_bytes!("fixtures/cert.der");
+    let key = include_bytes!("fixtures/key.der");
+    let mut blob = b"HMDER1".to_vec();
+    for part in [&cert[..], &key[..]] {
+        blob.extend((part.len() as u32).to_le_bytes());
+        blob.extend_from_slice(part);
+    }
+    let (name, team, _) = certificate(&blob, "").unwrap();
+    assert_eq!(name, "Apple Development: Horizon Test (ABCDE12345)");
+    assert_eq!(team, "ABCDE12345");
+    load(&blob, "").unwrap();
+    assert!(certificate(&blob[..blob.len() - 10], "").is_err());
+}
