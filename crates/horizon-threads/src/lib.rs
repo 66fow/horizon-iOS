@@ -338,9 +338,19 @@ const PURGE_DELAY: libmimalloc_sys::mi_option_t = 15;
 pub fn configure_allocator() {
     // SAFETY: sets one integer option, which mimalloc reads at each purge.
     unsafe {
-        libmimalloc_sys::mi_option_set(PURGE_DELAY, 0);
+        libmimalloc_sys::mi_option_set(PURGE_DELAY, PURGE_DELAY_MS);
     }
 }
+
+/// iOS keeps freed pages 250 ms before handing them back: meshing, chunk loading and uploads
+/// free and allocate large blocks every frame, and returning each one to the kernel at once
+/// makes the next allocation fault its pages in again on a frame's critical path (a short
+/// hitch every so often). A quarter of a second of freed pages is a few MB, not the quarter
+/// more memory mimalloc's default second held.
+#[cfg(target_os = "ios")]
+const PURGE_DELAY_MS: std::ffi::c_long = 250;
+#[cfg(not(target_os = "ios"))]
+const PURGE_DELAY_MS: std::ffi::c_long = 0;
 
 /// The bytes the allocator has committed now and at its peak (mimalloc's
 /// process info), for `horizon-ctl memory`.
@@ -643,7 +653,7 @@ mod tests {
             assert_eq!(get(), 1000);
         }
         super::configure_allocator();
-        assert_eq!(get(), 0);
+        assert_eq!(get(), super::PURGE_DELAY_MS);
     }
 }
 
