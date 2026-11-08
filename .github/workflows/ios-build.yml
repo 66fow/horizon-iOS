@@ -44,13 +44,13 @@ jobs:
           IPHONEOS_DEPLOYMENT_TARGET: "15.0"
           # The fork whose "Native mods for iOS" issue the app's Native tab ticks.
           HORIZON_IOS_REPO: ${{ github.repository }}
-        run: cargo build --profile fast --locked --target aarch64-apple-ios -p horizon-client --bin horizon-client
+        run: cargo build --profile ios --locked --target aarch64-apple-ios -p horizon-client --bin horizon-client
       - name: Package
         id: package
         run: |
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/horizon-client/Cargo.toml | head -1)
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          packaging/ios/package.sh target/aarch64-apple-ios/fast/horizon-client "$version" dist
+          packaging/ios/package.sh target/aarch64-apple-ios/ios/horizon-client "$version" dist
       - uses: actions/upload-artifact@v7
         with:
           name: Horizon-ios
@@ -70,3 +70,4 @@ jobs:
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
             --title "Horizon for iOS $VERSION (build $GITHUB_RUN_NUMBER, experimental)" \
             --notes-file packaging/ios/README.md
+            
