@@ -1,4 +1,4 @@
-//! The on-screen controls while playing: a movement stick on the left,
+//! The on-screen controls while playing: a movement stick fixed on the left,
 //! dragging anywhere else turns the view, a quick tap uses (places, eats,
 //! opens) and holding still attacks (breaks), plus buttons for jump, sneak,
 //! attack, use, drop, inventory, chat, perspective and pause, and a tap on a
@@ -32,7 +32,7 @@ pub enum TouchButton {
     Edit,
     /// F3: the debug screen.
     Debug,
-    /// Held while the stick is pushed fully forward; not on screen.
+    /// Held while the stick is pushed forward (kept until it comes back); not on screen.
     Sprint,
 }
 
@@ -303,11 +303,16 @@ const GAP: f32 = 4.0;
 /// A finger that moved less than this is still a tap or a hold.
 const STILL: f32 = 6.0;
 /// Shorter than this, a touch on the view is a tap (use).
-const TAP: Duration = Duration::from_millis(250);
+const TAP: Duration = Duration::from_millis(180);
 /// Held still this long, a touch on the view attacks (breaks a block).
-const HOLD: Duration = Duration::from_millis(300);
+const HOLD: Duration = Duration::from_millis(220);
 /// A tapped button stays down this long: the game samples keys once a tick (50 ms).
-const PULSE: Duration = Duration::from_millis(80);
+const PULSE: Duration = Duration::from_millis(60);
+/// Pushed this far forward, the stick starts sprinting; it keeps sprinting until
+/// the stick comes back below `SPRINT_OFF` (or the finger lifts), so a thumb
+/// that relaxes a little does not stop the run.
+const SPRINT_ON: f32 = 0.8;
+const SPRINT_OFF: f32 = 0.3;
 
 /// One control as laid out.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -355,25 +360,20 @@ impl Layout {
                 (safe.x + fx * safe.w, safe.y + fy * safe.h)
             });
             let (w, h) = match item.control {
-                // A moved or resized stick takes a square around its home.
-                Control::Stick if p.centre.is_some() || size != 1.0 => {
-                    let side = STICK_RADIUS * 4.4 * size;
+                // The stick is a fixed square around its home; a finger that
+                // comes down in it is the stick, measured from that home.
+                Control::Stick => {
+                    let side = STICK_RADIUS * 4.0 * size;
                     (side, side)
                 }
                 _ => (item.area.w * size, item.area.h * size),
             };
-            if item.control == Control::Stick && p.centre.is_none() && size == 1.0 {
-                // The default stick area stays as it is: most of the left side.
-            } else {
-                item.area = Area::around(centre, w, h).kept_in(screen);
-            }
+            item.area = Area::around(centre, w, h).kept_in(screen);
             item.opacity = p.opacity;
             item.hidden = p.hidden;
             if item.control == Control::Stick {
                 layout.stick_radius = STICK_RADIUS * size;
-                if p.centre.is_some() || size != 1.0 {
-                    layout.stick_home = item.area.centre();
-                }
+                layout.stick_home = item.area.centre();
             }
         }
         layout
@@ -405,12 +405,11 @@ impl Layout {
             w: HOTBAR_WIDTH,
             h: HOTBAR_HEIGHT,
         };
-        let stick = Area {
-            x: safe.x,
-            y: safe.y + safe.h * 0.3,
-            w: (safe.w * 0.4).min(hotbar.x - safe.x).max(0.0),
-            h: safe.h * 0.7,
-        };
+        // The stick sits at a fixed home in the bottom left; a finger that
+        // comes down within twice its radius of it is the stick.
+        let half = STICK_RADIUS * 2.0;
+        let home = (safe.x + GAP * 3.0 + half, bottom - GAP - half);
+        let stick = Area::around(home, half * 2.0, half * 2.0);
         let area = |control: Control| match control {
             Control::Button(TouchButton::Jump) => big(col(0.0), row(0.0)),
             Control::Button(TouchButton::Sneak) => big(col(1.0), row(0.0)),
@@ -439,17 +438,13 @@ impl Layout {
                 hidden: false,
             })
             .collect();
-        let r = STICK_RADIUS;
         Self {
             width,
             height,
             safe,
             items,
-            stick_radius: r,
-            stick_home: (
-                stick.x + GAP * 3.0 + r * 1.3,
-                stick.y + stick.h - GAP * 3.0 - r * 1.3,
-            ),
+            stick_radius: STICK_RADIUS,
+            stick_home: home,
         }
     }
 
@@ -627,11 +622,13 @@ pub struct TouchControls {
     /// A layout the editor finished, for the game to save.
     saved: Option<TouchSettings>,
     fingers: HashMap<u64, Role>,
-    /// Sneak toggles: one tap down, the next back up.
-    sneaking: bool,
-    /// The game toggles sneaking itself on each press (the controller's
-    /// toggle sneak): Sneak is then a tap, and the game's state says whether
-    /// it is down. Set by the game.
+    /// The stick is sprinting (`SPRINT_ON` reached, `SPRINT_OFF` not yet).
+    sprinting: bool,
+    /// The game's Sneak option is Toggle: it flips sneaking on each press, so
+    /// the game's own state (not the finger) says whether the button is down.
+    /// With Hold the button is down while the finger is. Either way the
+    /// button only reports the finger; the game applies the option. Set by
+    /// the game.
     pub sneak_taps: bool,
     /// Buttons tapped and held for a pulse, until then.
     pulses: Vec<(TouchButton, Instant)>,
@@ -681,9 +678,6 @@ impl TouchControls {
             Started => {
                 let role = if let Some(button) = layout.button_at(at) {
                     match button {
-                        TouchButton::Sneak if !self.sneak_taps => {
-                            self.sneaking = !self.sneaking;
-                        }
                         TouchButton::Edit => {
                             self.release_all();
                             self.editor = Some(Editor {
@@ -706,7 +700,10 @@ impl TouchControls {
                         .values()
                         .any(|r| matches!(r, Role::Stick { .. }))
                 {
-                    Role::Stick { origin: at, at }
+                    Role::Stick {
+                        origin: layout.stick_home,
+                        at,
+                    }
                 } else {
                     Role::Look {
                         last: at,
@@ -844,6 +841,7 @@ impl TouchControls {
     pub fn release_all(&mut self) {
         self.fingers.clear();
         self.pulses.clear();
+        self.sprinting = false;
         self.look = (0.0, 0.0);
         self.slot = None;
         if let Some(editor) = &mut self.editor {
@@ -864,14 +862,12 @@ impl TouchControls {
         })
     }
 
-    /// Whether `button` is down now, for drawing it pressed (with
-    /// `sneak_taps`, the game knows whether sneaking is on).
+    /// Whether a finger is on `button` now, for drawing it pressed (Sneak is
+    /// drawn from the game's own state instead).
     pub fn pressed(&self, button: TouchButton) -> bool {
-        (button == TouchButton::Sneak && self.sneaking && !self.sneak_taps)
-            || self
-                .fingers
-                .values()
-                .any(|r| matches!(r, Role::Button(b) if *b == button))
+        self.fingers
+            .values()
+            .any(|r| matches!(r, Role::Button(b) if *b == button))
     }
 
     /// The state to apply this frame; the look and the tapped slot are
@@ -883,20 +879,17 @@ impl TouchControls {
         self.pulses.retain(|(_, until)| *until > now);
         let mut held: Vec<TouchButton> = self.pulses.iter().map(|(b, _)| *b).collect();
         let mut stick = [0.0; 2];
+        let mut stick_down = false;
         let radius = layout.stick_radius;
         for role in self.fingers.values_mut() {
             match role {
-                Role::Button(b)
-                    if *b != TouchButton::Edit && (*b != TouchButton::Sneak || self.sneak_taps) =>
-                {
+                Role::Button(b) if *b != TouchButton::Edit => {
                     held.push(*b);
                 }
                 Role::Stick { origin, at } => {
                     let k = knob(*origin, *at, radius);
                     stick = [(k.0 - origin.0) / radius, -(k.1 - origin.1) / radius];
-                    if stick[1] > 0.9 {
-                        held.push(TouchButton::Sprint);
-                    }
+                    stick_down = true;
                 }
                 Role::Look {
                     since,
@@ -912,8 +905,13 @@ impl TouchControls {
                 _ => {}
             }
         }
-        if self.sneaking && !self.sneak_taps {
-            held.push(TouchButton::Sneak);
+        if !stick_down || stick[1] < SPRINT_OFF {
+            self.sprinting = false;
+        } else if stick[1] >= SPRINT_ON {
+            self.sprinting = true;
+        }
+        if self.sprinting {
+            held.push(TouchButton::Sprint);
         }
         held.sort_by_key(|b| *b as u8);
         held.dedup();
