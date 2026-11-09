@@ -32,6 +32,8 @@ jobs:
       name: ${{ steps.collect.outputs.name }}
       package: ${{ steps.stage.outputs.package }}
       features: ${{ steps.stage.outputs.features }}
+      mods_ok: ${{ steps.stage.outputs.mods_ok }}
+      skipped: ${{ steps.stage.outputs.skipped }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -144,6 +146,32 @@ jobs:
           echo "$revision" > horizon/.horizon-revision
           find horizon -type l -print -delete
           rm -rf horizon/.git
+          # Each mod is tried alone first: one that does not apply to this branch's source is
+          # skipped (and named in the log and the release notes) instead of failing the whole build.
+          ok=""; skipped=""
+          for d in mods/*/; do
+            id=$(basename "$d")
+            rm -rf probe-mods probe-out
+            mkdir probe-mods
+            cp -R "$d" "probe-mods/$id"
+            if horizon/launcher/target/release/horizon-launcher native-stage "$PWD/probe-mods" \
+              --source "$PWD/horizon" --revision "$revision" --out "$PWD/probe-out" --rust "$HOME/.cargo" \
+              --trust-native-code > probe.json 2> probe.err; then
+              ok="$ok $id"
+              echo "OK      $id"
+            else
+              skipped="$skipped $id"
+              echo "::warning::SKIPPED $id: it does not apply to this branch's source"
+              jq -r '"    \(.code) - \(.message) (\(.target // ""))"' probe.json 2>/dev/null \
+                || { head -c 600 probe.json; tail -n 8 probe.err; }
+              rm -rf "mods/$id"
+            fi
+          done
+          rm -rf probe-mods probe-out
+          echo "mods_ok=${ok# }" >> "$GITHUB_OUTPUT"
+          echo "skipped=${skipped# }" >> "$GITHUB_OUTPUT"
+          if [ -z "${ok// /}" ]; then echo "::error::none of the mods applies to this branch's source"; exit 1; fi
+
           if ! horizon/launcher/target/release/horizon-launcher native-stage "$PWD/mods" \
             --source "$PWD/horizon" --revision "$revision" --out "$PWD/staged" --rust "$HOME/.cargo" \
             --trust-native-code > staged.json; then
@@ -210,7 +238,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.package.outputs.version }}
-          MODS: ${{ needs.stage.outputs.mods }}
+          MODS: ${{ needs.stage.outputs.mods_ok }}
+          SKIPPED: ${{ needs.stage.outputs.skipped }}
           INSTANCE: ${{ needs.stage.outputs.instance }}
           NAME: ${{ needs.stage.outputs.name }}
         run: |
@@ -222,6 +251,7 @@ jobs:
             echo
             echo "Instance **$NAME** ($INSTANCE): it installs as its own app, beside Horizon and other instances. Opened with \`horizon-i$INSTANCE://\`."
             echo
+            [ -z "$SKIPPED" ] || { echo "Skipped (do not apply to this branch's source): \`$SKIPPED\`."; echo; }
             echo "Native mods change the game's own code and run with full access to the app."
           } > notes.md
           gh release create "$tag" "$file" --repo "$GITHUB_REPOSITORY" --prerelease \
