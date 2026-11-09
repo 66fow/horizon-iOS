@@ -61,29 +61,47 @@ jobs:
           mkdir -p mods
           ids=""
 
-          # Writes horizon-native.json for mods/<id>, from the mixins bundle (as ios-user-mod.yml does).
+          # Checks mods/<id>; writes horizon-native.json only when the mod has none.
           finish() {
             local id="$1" dir="mods/$1"
-            [ -f "$dir/mixins/$id/horizon-mixin.toml" ] || {
-              echo "::error::$id: mixins/$id/horizon-mixin.toml is missing. What the mod holds:"
+            find "$dir/mixins" -name horizon-mixin.toml 2>/dev/null | grep -q . || {
+              echo "::error::$id: no mixins/<name>/horizon-mixin.toml in it. What the mod holds:"
               (cd "$dir" && find . -type f | head -40)
               exit 1
             }
-            local version
-            version=$(sed -n 's/^version *= *"\(.*\)"/\1/p' "$dir/mixins/$id/horizon-mixin.toml" | head -1)
-            [[ "$version" =~ ^[0-9A-Za-z.+-]{1,32}$ ]] || { echo "::error::$id: version \"$version\" is not a plain version like 0.1.0"; exit 1; }
-            ID="$id" V="$version" R="$revision" M="$mixins" python3 -c 'import json,os; print(json.dumps({"schema": 1, "id": os.environ["ID"], "version": os.environ["V"], "game": "26.3", "horizon": os.environ["R"], "mixins": os.environ["M"]}, indent=1))' > "$dir/horizon-native.json"
+            if [ ! -f "$dir/horizon-native.json" ]; then
+              local toml version
+              toml=$(find "$dir/mixins" -name horizon-mixin.toml | head -1)
+              version=$(sed -n 's/^version *= *"\(.*\)"/\1/p' "$toml" | head -1)
+              [[ "$version" =~ ^[0-9A-Za-z.+-]{1,32}$ ]] || { echo "::error::$id: version \"$version\" is not a plain version like 0.1.0"; exit 1; }
+              ID="$id" V="$version" R="$revision" M="$mixins" python3 -c 'import json,os; print(json.dumps({"schema": 1, "id": os.environ["ID"], "version": os.environ["V"], "game": "26.3", "horizon": os.environ["R"], "mixins": os.environ["M"]}, indent=1))' > "$dir/horizon-native.json"
+            fi
+            local shown
+            shown=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get("version","?"), "hooks=" + str(d.get("hooks","-")))' "$dir/horizon-native.json")
             ids="$ids $id"
-            echo "Mod $id $version"
+            echo "Mod $id $shown"
           }
 
           shopt -s nullglob
-          # 1) <id>.hnmod files
+          # 1) .hnmod files: the file name can be anything (connected_textures-0.1.5.hnmod);
+          #    the id is read from the mod itself.
           for f in "$src"/*.hnmod; do
-            id=$(basename "$f" .hnmod)
-            [[ "$id" =~ ^[a-z0-9_]{1,64}$ ]] || { echo "::error::$(basename "$f"): the file name must be the mod id ([a-z0-9_], 64 at most)"; exit 1; }
-            rm -rf "mods/$id"; mkdir -p "mods/$id"
-            unzip -q "$f" -d "mods/$id"
+            tmp=$(mktemp -d)
+            unzip -q "$f" -d "$tmp" || { echo "::error::$(basename "$f") is not a zip"; exit 1; }
+            if [ -f "$tmp/horizon-native.json" ]; then
+              id=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("id",""))' "$tmp/horizon-native.json")
+            else
+              id=$(ls "$tmp/mixins" 2>/dev/null | head -1)
+            fi
+            [[ "$id" =~ ^[a-z0-9_]{1,64}$ ]] || {
+              echo "::error::$(basename "$f"): cannot find the mod id (got \"$id\"). What the file holds:"
+              (cd "$tmp" && find . -type f | head -30)
+              exit 1
+            }
+            [ ! -e "mods/$id" ] || { echo "::error::mod $id is in mod-list/ twice (see $(basename "$f")): keep one version"; exit 1; }
+            mkdir -p "mods/$id"
+            cp -R "$tmp"/. "mods/$id"/
+            rm -rf "$tmp"
             finish "$id"
           done
           # 2) plain folders mod-list/<id>/mixins/<id>/...
