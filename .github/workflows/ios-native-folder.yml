@@ -1,0 +1,212 @@
+# Builds Horizon for iOS with the native mods in the `mod-list/` folder of the ios-build branch.
+# Put one `<id>.hnmod` per mod there (a zip with the `mixins/` folder, optionally horizon-native.json),
+# or a plain folder `mod-list/<id>/mixins/<id>/horizon-mixin.toml`. Then run
+# Actions -> "iOS build with mods from mod-list folder". Same staging and iOS build as
+# ios-native-build.yml, but the mods come from the repo, not from the registry.
+name: iOS build with mods from mod-list folder
+
+on:
+  workflow_dispatch:
+    inputs:
+      instance:
+        description: "Instance number, digits (blank: a new instance). The same number updates that instance."
+        default: ""
+      name:
+        description: "The instance's name on the home screen (blank: Horizon <number>)"
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ios-native-folder
+  cancel-in-progress: true
+
+jobs:
+  stage:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    outputs:
+      mods: ${{ steps.collect.outputs.mods }}
+      instance: ${{ steps.collect.outputs.instance }}
+      name: ${{ steps.collect.outputs.name }}
+      package: ${{ steps.stage.outputs.package }}
+      features: ${{ steps.stage.outputs.features }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ios-build
+          path: horizon
+          persist-credentials: false
+
+      - name: Collect the mods from mod-list/
+        id: collect
+        env:
+          INSTANCE: ${{ inputs.instance }}
+          NAME: ${{ inputs.name }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$INSTANCE" =~ ^[0-9]{4,12}$ ]]; then
+            INSTANCE=$(python3 -c 'import secrets; print(100000 + secrets.randbelow(900000))')
+          fi
+          NAME=$(printf '%s' "$NAME" | tr -d '<>&"\\/`$' | tr -s ' ' | cut -c1-30)
+          [ -n "$NAME" ] || NAME="Horizon $INSTANCE"
+          echo "instance=$INSTANCE" >> "$GITHUB_OUTPUT"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+
+          src="$PWD/horizon/mod-list"
+          [ -d "$src" ] || { echo "::error::the folder mod-list/ is not on the ios-build branch"; exit 1; }
+          revision=$(git -C horizon rev-parse HEAD)
+          mixins=$(git ls-remote https://github.com/horizon-rust/horizon-mixins HEAD | cut -f1)
+          mkdir -p mods
+          ids=""
+
+          # Writes horizon-native.json for mods/<id>, from the mixins bundle (as ios-user-mod.yml does).
+          finish() {
+            local id="$1" dir="mods/$1"
+            [ -f "$dir/mixins/$id/horizon-mixin.toml" ] || {
+              echo "::error::$id: mixins/$id/horizon-mixin.toml is missing. What the mod holds:"
+              (cd "$dir" && find . -type f | head -40)
+              exit 1
+            }
+            local version
+            version=$(sed -n 's/^version *= *"\(.*\)"/\1/p' "$dir/mixins/$id/horizon-mixin.toml" | head -1)
+            [[ "$version" =~ ^[0-9A-Za-z.+-]{1,32}$ ]] || { echo "::error::$id: version \"$version\" is not a plain version like 0.1.0"; exit 1; }
+            ID="$id" V="$version" R="$revision" M="$mixins" python3 -c 'import json,os; print(json.dumps({"schema": 1, "id": os.environ["ID"], "version": os.environ["V"], "game": "26.3", "horizon": os.environ["R"], "mixins": os.environ["M"]}, indent=1))' > "$dir/horizon-native.json"
+            ids="$ids $id"
+            echo "Mod $id $version"
+          }
+
+          shopt -s nullglob
+          # 1) <id>.hnmod files
+          for f in "$src"/*.hnmod; do
+            id=$(basename "$f" .hnmod)
+            [[ "$id" =~ ^[a-z0-9_]{1,64}$ ]] || { echo "::error::$(basename "$f"): the file name must be the mod id ([a-z0-9_], 64 at most)"; exit 1; }
+            rm -rf "mods/$id"; mkdir -p "mods/$id"
+            unzip -q "$f" -d "mods/$id"
+            finish "$id"
+          done
+          # 2) plain folders mod-list/<id>/mixins/<id>/...
+          for d in "$src"/*/; do
+            id=$(basename "$d")
+            [ -d "$d/mixins" ] || continue
+            [[ "$id" =~ ^[a-z0-9_]{1,64}$ ]] || { echo "::error::folder $id: the name must be the mod id ([a-z0-9_], 64 at most)"; exit 1; }
+            [ ! -e "mods/$id" ] || { echo "::error::$id is there twice (a .hnmod and a folder)"; exit 1; }
+            mkdir -p "mods/$id"
+            cp -R "$d/mixins" "mods/$id/"
+            finish "$id"
+          done
+
+          if find mods -type l | grep -q .; then echo "::error::a mod has links in it"; exit 1; fi
+          if [ -z "${ids// /}" ]; then echo "::error::no mods in mod-list/ (add <id>.hnmod files)"; exit 1; fi
+          echo "mods=${ids# }" >> "$GITHUB_OUTPUT"
+          # The folder is not part of the game's source.
+          rm -rf horizon/mod-list
+
+      - name: Linux libraries the launcher links
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev \
+            libfontconfig-dev libvulkan-dev libasound2-dev libudev-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: horizon/launcher
+          key: native-stage
+      - name: Build the launcher's command line
+        run: cargo build --release --locked --manifest-path horizon/launcher/Cargo.toml --bin horizon-launcher
+
+      - name: Stage the mods onto Horizon's source
+        id: stage
+        env:
+          HORIZON_LAUNCHER_HOME: ${{ runner.temp }}/launcher-home
+          HORIZON_LAUNCHER_NO_SELF_UPDATE: "1"
+        run: |
+          revision=$(git -C horizon rev-parse HEAD)
+          echo "$revision" > horizon/.horizon-revision
+          find horizon -type l -print -delete
+          rm -rf horizon/.git
+          if ! horizon/launcher/target/release/horizon-launcher native-stage "$PWD/mods" \
+            --source "$PWD/horizon" --revision "$revision" --out "$PWD/staged" --rust "$HOME/.cargo" \
+            --trust-native-code > staged.json; then
+            cat staged.json
+            echo "::error::a mod does not apply to this branch's source"
+            tail -n 120 "$HORIZON_LAUNCHER_HOME/native/build.log" || true
+            exit 1
+          fi
+          cat staged.json
+          package=$(python3 -c 'import json;print(json.load(open("staged.json"))["package"])')
+          features=$(python3 -c 'import json;print("--features horizon-client/mods" if json.load(open("staged.json"))["mods_feature"] else "")')
+          echo "package=$package" >> "$GITHUB_OUTPUT"
+          echo "features=$features" >> "$GITHUB_OUTPUT"
+          tar --exclude=./target --exclude=./.git --exclude=./launcher/target -czf staged.tar.gz -C staged .
+          ls -lh staged.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: staged-folder
+          path: |
+            staged.tar.gz
+            staged.json
+          retention-days: 3
+
+  ipa:
+    needs: stage
+    runs-on: macos-15-intel
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ios-build
+          path: horizon
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: staged-folder
+      - name: Unpack the staged source
+        run: mkdir ws && tar -xzf staged.tar.gz -C ws
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ws
+          key: ios-native
+      - name: Build
+        working-directory: ws
+        env:
+          IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+          HORIZON_IOS_REPO: ${{ github.repository }}
+        run: >-
+          cargo build --profile fast --locked --target aarch64-apple-ios
+          -p ${{ needs.stage.outputs.package }} --bin horizon-client ${{ needs.stage.outputs.features }}
+      - name: Package
+        id: package
+        env:
+          IOS_INSTANCE: ${{ needs.stage.outputs.instance }}
+          IOS_NAME: ${{ needs.stage.outputs.name }}
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' horizon/crates/horizon-client/Cargo.toml | head -1)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          horizon/packaging/ios/package.sh ws/target/aarch64-apple-ios/fast/horizon-client "$version" dist
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.package.outputs.version }}
+          MODS: ${{ needs.stage.outputs.mods }}
+          INSTANCE: ${{ needs.stage.outputs.instance }}
+          NAME: ${{ needs.stage.outputs.name }}
+        run: |
+          tag=ios-folder-r$GITHUB_RUN_NUMBER
+          file="dist/Horizon-ios-$VERSION-folder-r$GITHUB_RUN_NUMBER-i$INSTANCE.ipa"
+          cp dist/Horizon.ipa "$file"
+          {
+            echo "Horizon for iOS with native mods from the mod-list folder: \`$MODS\`."
+            echo
+            echo "Instance **$NAME** ($INSTANCE): it installs as its own app, beside Horizon and other instances. Opened with \`horizon-i$INSTANCE://\`."
+            echo
+            echo "Native mods change the game's own code and run with full access to the app."
+          } > notes.md
+          gh release create "$tag" "$file" --repo "$GITHUB_REPOSITORY" --prerelease \
+            --title "$NAME: Horizon for iOS $VERSION with native mods (folder build $GITHUB_RUN_NUMBER)" \
+            --notes-file notes.md
+            
