@@ -30,6 +30,9 @@ pub(super) struct StartupMenu {
     /// The Mods page's Get Mods button was pressed: the mods screen opens once
     /// the game has the screen.
     get_mods: bool,
+    /// The Controls page's Custom Controls button was pressed: the touch
+    /// controls' editor opens once the game has the screen.
+    edit_touch: bool,
     /// The screens' narration, handed to the game with the title (which
     /// stays the screen already opened).
     narration: horizon_client::screen_narrator::ScreenNarrator,
@@ -128,6 +131,9 @@ impl StartupMenu {
         game.narration = std::mem::take(&mut self.narration);
         if std::mem::take(&mut self.get_mods) {
             game.open_mods();
+        }
+        if std::mem::take(&mut self.edit_touch) {
+            game.open_touch_editor();
         }
         // Preserve an existing resource-error screen opened by start_game.
         if self.options_open {
@@ -561,6 +567,7 @@ impl Loading {
                     packs::open_folder(&dir);
                 }
                 Event::GetMods => self.menu.get_mods = true,
+                Event::EditTouchControls => self.menu.edit_touch = true,
                 Event::OpenModFolder => {
                     let dir = Game::game_dir().join(horizon_client::mod_list::DIR);
                     let _ = std::fs::create_dir_all(&dir);
