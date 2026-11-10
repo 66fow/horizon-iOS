@@ -5,8 +5,10 @@
 //! hotbar slot selects it.
 //!
 //! Every control can be moved, resized, faded or hidden in the layout editor
-//! (the Edit button), like a phone shooter's HUD editor; [`TouchSettings`] is
-//! the saved layout. Positions are in GUI units (physical pixels over the GUI
+//! (Options, Controls, Custom Controls), like a phone shooter's HUD editor;
+//! holding a finger down in the editor adds a button, copies one or binds a
+//! keyboard key to one, as a keybind on a PC (a mod's key, say);
+//! [`TouchSettings`] is the saved layout. Positions are in GUI units (physical pixels over the GUI
 //! scale), the units the HUD is drawn in, so the controls keep their size on
 //! every screen, and they stay inside the screen's safe area (clear of the
 //! notch and the home bar).
@@ -28,8 +30,6 @@ pub enum TouchButton {
     Chat,
     Perspective,
     Pause,
-    /// Opens the layout editor.
-    Edit,
     /// F3: the debug screen.
     Debug,
     /// Held while the stick is pushed forward (kept until it comes back); not on screen.
@@ -38,7 +38,7 @@ pub enum TouchButton {
 
 impl TouchButton {
     /// The buttons on screen, in the order they are laid out.
-    pub const PLACED: [TouchButton; 11] = [
+    pub const PLACED: [TouchButton; 10] = [
         Self::Jump,
         Self::Sneak,
         Self::Attack,
@@ -47,14 +47,12 @@ impl TouchButton {
         Self::Pause,
         Self::Chat,
         Self::Perspective,
-        Self::Edit,
         Self::Debug,
         Self::Inventory,
     ];
 
     /// The key mapping it stands for; `None` for pause (the controller's
-    /// Start), F3 (the keyboard's key, which no controller button has) and
-    /// the editor's button.
+    /// Start) and F3 (the keyboard's key, which no controller button has).
     pub fn action(self) -> Option<&'static str> {
         Some(match self {
             Self::Jump => "key.jump",
@@ -66,7 +64,7 @@ impl TouchButton {
             Self::Drop => "key.drop",
             Self::Perspective => "key.togglePerspective",
             Self::Sprint => "key.sprint",
-            Self::Pause | Self::Edit | Self::Debug => return None,
+            Self::Pause | Self::Debug => return None,
         })
     }
 
@@ -82,23 +80,73 @@ impl TouchButton {
             Self::Chat => "chat",
             Self::Perspective => "perspective",
             Self::Pause => "pause",
-            Self::Edit => "edit",
             Self::Debug => "debug",
             Self::Sprint => "sprint",
         }
     }
+
+    /// The button called `name` in the settings file.
+    fn from_key(name: &str) -> Option<Self> {
+        Self::PLACED.into_iter().find(|b| b.key() == name)
+    }
 }
+
+/// What a button the player added presses.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Bind {
+    /// Nothing yet: it waits for a key.
+    Unbound,
+    /// A keyboard key (`key.keyboard.f7`), pressed as the keyboard's own: a
+    /// mod that has a keybind on it hears it.
+    Key(String),
+    /// What a built-in button does: a copy of it.
+    Button(TouchButton),
+}
+
+impl Bind {
+    fn to_text(&self) -> String {
+        match self {
+            Self::Unbound => "-".to_owned(),
+            Self::Key(name) => name.clone(),
+            Self::Button(b) => format!("button:{}", b.key()),
+        }
+    }
+
+    fn parse(text: &str) -> Option<Self> {
+        let text = text.trim();
+        if text == "-" {
+            return Some(Self::Unbound);
+        }
+        if let Some(name) = text.strip_prefix("button:") {
+            return TouchButton::from_key(name).map(Self::Button);
+        }
+        crate::keybinds::key_code(text).map(|_| Self::Key(text.to_owned()))
+    }
+}
+
+/// A button the player added in the editor.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CustomButton {
+    pub id: u32,
+    pub bind: Bind,
+}
+
+/// The most buttons a player can add.
+pub const MAX_CUSTOM: usize = 24;
 
 /// Something the layout editor moves: a button, the movement stick or the hotbar.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Control {
     Button(TouchButton),
+    /// A button the player added (its id).
+    Custom(u32),
     Stick,
     Hotbar,
 }
 
 impl Control {
-    /// Every control, in the settings file's order.
+    /// Every built-in control, in the settings file's order (the player's
+    /// own buttons come after them, from the settings).
     pub fn all() -> impl Iterator<Item = Control> {
         TouchButton::PLACED
             .into_iter()
@@ -109,6 +157,7 @@ impl Control {
     fn key(self) -> &'static str {
         match self {
             Self::Button(b) => b.key(),
+            Self::Custom(_) => "custom",
             Self::Stick => "stick",
             Self::Hotbar => "hotbar",
         }
@@ -126,9 +175,9 @@ impl Control {
             Self::Button(TouchButton::Chat) => "horizon.touch.chat",
             Self::Button(TouchButton::Perspective) => "horizon.touch.perspective",
             Self::Button(TouchButton::Pause) => "horizon.touch.pause",
-            Self::Button(TouchButton::Edit) => "horizon.touch.edit",
             Self::Button(TouchButton::Debug) => "horizon.touch.debug",
             Self::Button(TouchButton::Sprint) => "key.sprint",
+            Self::Custom(_) => "horizon.touch.custom",
             Self::Stick => "horizon.touch.stick",
             Self::Hotbar => "horizon.touch.hotbar",
         }
@@ -139,9 +188,9 @@ impl Control {
         self != Self::Hotbar
     }
 
-    /// The editor's own button and the hotbar always show.
+    /// The hotbar always shows.
     pub fn hideable(self) -> bool {
-        !matches!(self, Self::Button(TouchButton::Edit) | Self::Hotbar)
+        self != Self::Hotbar
     }
 }
 
@@ -179,6 +228,8 @@ impl Default for Placement {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TouchSettings {
     placements: HashMap<Control, Placement>,
+    /// The buttons the player added, in the order they were made.
+    customs: Vec<CustomButton>,
 }
 
 impl TouchSettings {
@@ -194,6 +245,38 @@ impl TouchSettings {
         }
     }
 
+    /// The buttons the player added.
+    pub fn customs(&self) -> &[CustomButton] {
+        &self.customs
+    }
+
+    pub fn custom(&self, id: u32) -> Option<&CustomButton> {
+        self.customs.iter().find(|c| c.id == id)
+    }
+
+    /// A new button pressing `bind`, placed by `placement`; its id, or `None`
+    /// when there are already `MAX_CUSTOM`.
+    pub fn add_custom(&mut self, bind: Bind, placement: Placement) -> Option<u32> {
+        if self.customs.len() >= MAX_CUSTOM {
+            return None;
+        }
+        let id = self.customs.iter().map(|c| c.id + 1).max().unwrap_or(0);
+        self.customs.push(CustomButton { id, bind });
+        self.set(Control::Custom(id), placement);
+        Some(id)
+    }
+
+    pub fn remove_custom(&mut self, id: u32) {
+        self.customs.retain(|c| c.id != id);
+        self.placements.remove(&Control::Custom(id));
+    }
+
+    pub fn set_bind(&mut self, id: u32, bind: Bind) {
+        if let Some(c) = self.customs.iter_mut().find(|c| c.id == id) {
+            c.bind = bind;
+        }
+    }
+
     /// Read the settings file: one `name=x,y,size,opacity,hidden` line per
     /// changed control (`x,y` as `-,-` for the default position). Lines it
     /// can't read are skipped, so an old or hand-edited file still loads.
@@ -203,6 +286,14 @@ impl TouchSettings {
             let Some((name, value)) = line.trim().split_once('=') else {
                 continue;
             };
+            if let Some(id) = name
+                .trim()
+                .strip_prefix("custom")
+                .and_then(|n| n.parse::<u32>().ok())
+            {
+                settings.parse_custom(id, value);
+                continue;
+            }
             let Some(control) = Control::all().find(|c| c.key() == name.trim()) else {
                 continue;
             };
@@ -231,6 +322,37 @@ impl TouchSettings {
         settings
     }
 
+    /// One `customN=bind,x,y,size,opacity,hidden` line.
+    fn parse_custom(&mut self, id: u32, value: &str) {
+        let parts: Vec<&str> = value.split(',').map(str::trim).collect();
+        let [bind, x, y, size, opacity, hidden] = parts[..] else {
+            return;
+        };
+        let number = |s: &str| s.parse::<f32>().ok().filter(|v| v.is_finite());
+        let (Some(bind), Some(size), Some(opacity)) =
+            (Bind::parse(bind), number(size), number(opacity))
+        else {
+            return;
+        };
+        if self.custom(id).is_some() || self.customs.len() >= MAX_CUSTOM {
+            return;
+        }
+        let centre = match (number(x), number(y)) {
+            (Some(x), Some(y)) => Some((x.clamp(0.0, 1.0), y.clamp(0.0, 1.0))),
+            _ => None,
+        };
+        self.customs.push(CustomButton { id, bind });
+        self.set(
+            Control::Custom(id),
+            Placement {
+                centre,
+                size: size.clamp(SIZES.0, SIZES.1),
+                opacity: opacity.clamp(OPACITIES.0, OPACITIES.1),
+                hidden: hidden == "1",
+            },
+        );
+    }
+
     /// The settings file's text ([`parse`](Self::parse) reads it back).
     pub fn to_text(&self) -> String {
         let mut out = String::new();
@@ -245,6 +367,21 @@ impl TouchSettings {
             out.push_str(&format!(
                 "{}={x},{y},{:.2},{:.2},{}\n",
                 control.key(),
+                p.size,
+                p.opacity,
+                u8::from(p.hidden)
+            ));
+        }
+        for c in &self.customs {
+            let p = self.placement(Control::Custom(c.id));
+            let (x, y) = match p.centre {
+                Some((x, y)) => (format!("{x:.4}"), format!("{y:.4}")),
+                None => ("-".to_owned(), "-".to_owned()),
+            };
+            out.push_str(&format!(
+                "custom{}={},{x},{y},{:.2},{:.2},{}\n",
+                c.id,
+                c.bind.to_text(),
                 p.size,
                 p.opacity,
                 u8::from(p.hidden)
@@ -306,6 +443,10 @@ const STILL: f32 = 6.0;
 const TAP: Duration = Duration::from_millis(180);
 /// Held still this long, a touch on the view attacks (breaks a block).
 const HOLD: Duration = Duration::from_millis(220);
+/// Held still this long in the editor, a finger opens its menu.
+const LONG: Duration = Duration::from_millis(500);
+/// A copied button lies this far (GUI units) down and right of the original.
+const COPY_OFFSET: f32 = 10.0;
 /// A tapped button stays down this long: the game samples keys once a tick (50 ms).
 const PULSE: Duration = Duration::from_millis(60);
 /// Pushed this far forward, the stick starts sprinting; it keeps sprinting until
@@ -343,6 +484,16 @@ impl Layout {
     /// The layout with every control where `settings` puts it.
     pub fn new(width: f32, height: f32, safe: Area, settings: &TouchSettings) -> Self {
         let mut layout = Self::defaults(width, height, safe);
+        // The player's buttons start in the middle of the screen until placed.
+        let middle = (safe.x + safe.w / 2.0, safe.y + safe.h / 2.0);
+        for c in settings.customs() {
+            layout.items.push(Item {
+                control: Control::Custom(c.id),
+                area: Area::around(middle, BIG, BIG),
+                opacity: 1.0,
+                hidden: false,
+            });
+        }
         let screen = Area {
             x: 0.0,
             y: 0.0,
@@ -380,7 +531,7 @@ impl Layout {
     }
 
     /// The default layout: action buttons in the bottom right, pause, chat,
-    /// view and edit along the top right, the inventory beside the hotbar,
+    /// view and F3 along the top right, the inventory beside the hotbar,
     /// the stick on the bottom left.
     fn defaults(width: f32, height: f32, safe: Area) -> Self {
         let right = safe.x + safe.w;
@@ -419,8 +570,7 @@ impl Layout {
             Control::Button(TouchButton::Pause) => top(0.0),
             Control::Button(TouchButton::Chat) => top(1.0),
             Control::Button(TouchButton::Perspective) => top(2.0),
-            Control::Button(TouchButton::Edit) => top(3.0),
-            Control::Button(TouchButton::Debug) => top(4.0),
+            Control::Button(TouchButton::Debug) => top(3.0),
             Control::Button(TouchButton::Inventory | TouchButton::Sprint) => Area {
                 x: hotbar.x + hotbar.w + GAP,
                 y: hotbar.y,
@@ -429,6 +579,8 @@ impl Layout {
             },
             Control::Stick => stick,
             Control::Hotbar => hotbar,
+            // The player's own buttons are laid out by `Layout::new`.
+            Control::Custom(_) => big(safe.x, safe.y),
         };
         let items = Control::all()
             .map(|control| Item {
@@ -477,6 +629,15 @@ impl Layout {
         })
     }
 
+    /// The shown button of the player's under `at`, if any (the last one
+    /// added is on top).
+    pub fn custom_at(&self, at: (f32, f32)) -> Option<u32> {
+        self.items.iter().rev().find_map(|i| match i.control {
+            Control::Custom(id) if !i.hidden && i.area.contains(at) => Some(id),
+            _ => None,
+        })
+    }
+
     /// The hotbar slot (0 to 8) under `at`.
     pub fn slot_at(&self, at: (f32, f32)) -> Option<usize> {
         let hotbar = self.hotbar();
@@ -489,12 +650,14 @@ impl Layout {
     /// the hotbar over the stick's area.
     pub fn control_at(&self, at: (f32, f32)) -> Option<Control> {
         let rank = |c: Control| match c {
-            Control::Button(_) => 0,
-            Control::Hotbar => 1,
-            Control::Stick => 2,
+            Control::Custom(_) => 0,
+            Control::Button(_) => 1,
+            Control::Hotbar => 2,
+            Control::Stick => 3,
         };
         self.items
             .iter()
+            .rev()
             .filter(|i| i.area.contains(at))
             .min_by_key(|i| rank(i.control))
             .map(|i| i.control)
@@ -567,11 +730,299 @@ struct Drag {
     grab: (f32, f32),
 }
 
+/// A finger that came down in the editor, for the long press.
+#[derive(Clone, Copy, Debug)]
+struct Press {
+    finger: u64,
+    at: (f32, f32),
+    since: Instant,
+    /// It moved more than `STILL`: a drag, not a long press.
+    moved: bool,
+}
+
+/// What a long press in the editor offers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MenuItem {
+    /// A new button where the finger is, to bind a key to.
+    Add,
+    /// A copy of the control the finger is on.
+    Copy,
+    /// Bind a key to the player's button the finger is on (a new button
+    /// where the finger is, when it is on none).
+    Keybind,
+    /// Remove the player's button the finger is on.
+    Delete,
+}
+
+impl MenuItem {
+    pub const ALL: [MenuItem; 4] = [Self::Add, Self::Copy, Self::Keybind, Self::Delete];
+
+    /// The translation key of its label.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Add => "horizon.touch.menu.add",
+            Self::Copy => "horizon.touch.menu.copy",
+            Self::Keybind => "horizon.touch.menu.keybind",
+            Self::Delete => "horizon.touch.menu.delete",
+        }
+    }
+
+    /// Whether it can be used on `target` (the control the finger was on).
+    pub fn enabled(self, target: Option<Control>) -> bool {
+        match self {
+            Self::Add | Self::Keybind => true,
+            Self::Copy => matches!(target, Some(Control::Button(_) | Control::Custom(_))),
+            Self::Delete => matches!(target, Some(Control::Custom(_))),
+        }
+    }
+}
+
+const MENU_W: f32 = 96.0;
+const MENU_H: f32 = 18.0;
+
+/// The menu a long press opened, at where the finger was.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EditorMenu {
+    pub at: (f32, f32),
+    /// The control the finger was on.
+    pub target: Option<Control>,
+}
+
+impl EditorMenu {
+    /// Its items, each with its area and whether it can be used, kept in
+    /// the safe area.
+    pub fn items(&self, layout: &Layout) -> Vec<(MenuItem, Area, bool)> {
+        let total = MenuItem::ALL.len() as f32 * MENU_H;
+        let x = self
+            .at
+            .0
+            .min(layout.safe.x + layout.safe.w - MENU_W)
+            .max(layout.safe.x);
+        let y = self
+            .at
+            .1
+            .min(layout.safe.y + layout.safe.h - total)
+            .max(layout.safe.y);
+        MenuItem::ALL
+            .iter()
+            .enumerate()
+            .map(|(i, item)| {
+                let area = Area {
+                    x,
+                    y: y + i as f32 * MENU_H,
+                    w: MENU_W,
+                    h: MENU_H,
+                };
+                (*item, area, item.enabled(self.target))
+            })
+            .collect()
+    }
+}
+
+/// The keys a button can be bound to, as `key.keyboard.*` names.
+pub const PICKER_KEYS: &[&str] = &[
+    "key.keyboard.a",
+    "key.keyboard.b",
+    "key.keyboard.c",
+    "key.keyboard.d",
+    "key.keyboard.e",
+    "key.keyboard.f",
+    "key.keyboard.g",
+    "key.keyboard.h",
+    "key.keyboard.i",
+    "key.keyboard.j",
+    "key.keyboard.k",
+    "key.keyboard.l",
+    "key.keyboard.m",
+    "key.keyboard.n",
+    "key.keyboard.o",
+    "key.keyboard.p",
+    "key.keyboard.q",
+    "key.keyboard.r",
+    "key.keyboard.s",
+    "key.keyboard.t",
+    "key.keyboard.u",
+    "key.keyboard.v",
+    "key.keyboard.w",
+    "key.keyboard.x",
+    "key.keyboard.y",
+    "key.keyboard.z",
+    "key.keyboard.1",
+    "key.keyboard.2",
+    "key.keyboard.3",
+    "key.keyboard.4",
+    "key.keyboard.5",
+    "key.keyboard.6",
+    "key.keyboard.7",
+    "key.keyboard.8",
+    "key.keyboard.9",
+    "key.keyboard.0",
+    "key.keyboard.f1",
+    "key.keyboard.f2",
+    "key.keyboard.f3",
+    "key.keyboard.f4",
+    "key.keyboard.f5",
+    "key.keyboard.f6",
+    "key.keyboard.f7",
+    "key.keyboard.f8",
+    "key.keyboard.f9",
+    "key.keyboard.f10",
+    "key.keyboard.f11",
+    "key.keyboard.f12",
+    "key.keyboard.space",
+    "key.keyboard.tab",
+    "key.keyboard.enter",
+    "key.keyboard.backspace",
+    "key.keyboard.escape",
+    "key.keyboard.left.shift",
+    "key.keyboard.left.control",
+    "key.keyboard.left.alt",
+    "key.keyboard.up",
+    "key.keyboard.down",
+    "key.keyboard.left",
+    "key.keyboard.right",
+    "key.keyboard.insert",
+    "key.keyboard.delete",
+    "key.keyboard.home",
+    "key.keyboard.end",
+    "key.keyboard.page.up",
+    "key.keyboard.page.down",
+    "key.keyboard.minus",
+    "key.keyboard.equal",
+    "key.keyboard.left.bracket",
+    "key.keyboard.right.bracket",
+    "key.keyboard.backslash",
+    "key.keyboard.semicolon",
+    "key.keyboard.apostrophe",
+    "key.keyboard.grave.accent",
+    "key.keyboard.comma",
+    "key.keyboard.period",
+    "key.keyboard.slash",
+    "key.keyboard.caps.lock",
+    "key.keyboard.keypad.0",
+    "key.keyboard.keypad.1",
+    "key.keyboard.keypad.2",
+    "key.keyboard.keypad.3",
+    "key.keyboard.keypad.4",
+    "key.keyboard.keypad.5",
+    "key.keyboard.keypad.6",
+    "key.keyboard.keypad.7",
+    "key.keyboard.keypad.8",
+    "key.keyboard.keypad.9",
+    "key.keyboard.keypad.add",
+    "key.keyboard.keypad.subtract",
+    "key.keyboard.keypad.multiply",
+    "key.keyboard.keypad.divide",
+    "key.keyboard.keypad.enter",
+    "key.keyboard.keypad.period",
+    "key.keyboard.f13",
+    "key.keyboard.f14",
+    "key.keyboard.f15",
+    "key.keyboard.f16",
+    "key.keyboard.f17",
+    "key.keyboard.f18",
+    "key.keyboard.f19",
+    "key.keyboard.f20",
+    "key.keyboard.f21",
+    "key.keyboard.f22",
+    "key.keyboard.f23",
+    "key.keyboard.f24",
+];
+
+const KEY_W: f32 = 34.0;
+const KEY_H: f32 = 20.0;
+const KEY_GAP: f32 = 3.0;
+/// The picker's title line above the keys.
+const PICKER_HEAD: f32 = 18.0;
+
+/// What a touch in the key picker can land on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PickerHit {
+    Key(&'static str),
+    Prev,
+    Next,
+    /// Unbind the button.
+    Clear,
+    Cancel,
+}
+
+/// One page of the key picker, as laid out.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PickerGrid {
+    pub cells: Vec<(PickerHit, Area)>,
+    pub pages: usize,
+    /// The page shown (the asked page kept within `pages`).
+    pub page: usize,
+}
+
+/// The key picker a Keybind opened, for the player's button `id`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Picker {
+    pub id: u32,
+    pub page: usize,
+}
+
+impl Picker {
+    /// The keys of the page and the buttons under them, over the whole safe
+    /// area.
+    pub fn grid(&self, layout: &Layout) -> PickerGrid {
+        let safe = layout.safe;
+        let foot_h = KEY_H;
+        let avail_h = (safe.h - PICKER_HEAD - foot_h - KEY_GAP * 2.0).max(KEY_H);
+        let cols = (((safe.w + KEY_GAP) / (KEY_W + KEY_GAP)).floor() as usize).max(1);
+        let rows = (((avail_h + KEY_GAP) / (KEY_H + KEY_GAP)).floor() as usize).max(1);
+        let per_page = cols * rows;
+        let pages = PICKER_KEYS.len().div_ceil(per_page).max(1);
+        let page = self.page.min(pages - 1);
+        let grid_w = cols as f32 * (KEY_W + KEY_GAP) - KEY_GAP;
+        let x0 = safe.x + (safe.w - grid_w) / 2.0;
+        let y0 = safe.y + PICKER_HEAD;
+        let mut cells = Vec::new();
+        for (n, name) in PICKER_KEYS.iter().enumerate().skip(page * per_page).take(per_page) {
+            let i = n - page * per_page;
+            cells.push((
+                PickerHit::Key(*name),
+                Area {
+                    x: x0 + (i % cols) as f32 * (KEY_W + KEY_GAP),
+                    y: y0 + (i / cols) as f32 * (KEY_H + KEY_GAP),
+                    w: KEY_W,
+                    h: KEY_H,
+                },
+            ));
+        }
+        let foot = [
+            PickerHit::Prev,
+            PickerHit::Next,
+            PickerHit::Clear,
+            PickerHit::Cancel,
+        ];
+        let foot_w = 56.0;
+        let total = foot.len() as f32 * (foot_w + KEY_GAP) - KEY_GAP;
+        let fx = safe.x + (safe.w - total) / 2.0;
+        let fy = safe.y + safe.h - foot_h;
+        for (i, hit) in foot.into_iter().enumerate() {
+            cells.push((
+                hit,
+                Area {
+                    x: fx + i as f32 * (foot_w + KEY_GAP),
+                    y: fy,
+                    w: foot_w,
+                    h: foot_h,
+                },
+            ));
+        }
+        PickerGrid { cells, pages, page }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct Editor {
     draft: TouchSettings,
     selected: Option<Control>,
     drag: Option<Drag>,
+    press: Option<Press>,
+    menu: Option<EditorMenu>,
+    picker: Option<Picker>,
 }
 
 /// What the editor shows.
@@ -580,6 +1031,10 @@ pub struct EditorView {
     pub selected: Option<Control>,
     /// The selected control's placement.
     pub placement: Placement,
+    /// The long press's menu, while it is open.
+    pub menu: Option<EditorMenu>,
+    /// The key picker, while it is open.
+    pub picker: Option<Picker>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -596,6 +1051,8 @@ enum Role {
         attacking: bool,
     },
     Button(TouchButton),
+    /// One of the player's own buttons.
+    Custom(u32),
     /// A finger on the hotbar picks its slot as it lands and then does nothing.
     Hotbar,
 }
@@ -605,6 +1062,8 @@ enum Role {
 pub struct TouchFrame {
     /// Buttons to hold down now.
     pub held: Vec<TouchButton>,
+    /// Keyboard keys (`key.keyboard.*`) held down now by the player's buttons.
+    pub keys: Vec<String>,
     /// The movement stick, -1 to 1, up (forward) positive.
     pub stick: [f32; 2],
     /// How far the view was dragged since the last frame, in GUI units.
@@ -632,6 +1091,8 @@ pub struct TouchControls {
     pub sneak_taps: bool,
     /// Buttons tapped and held for a pulse, until then.
     pulses: Vec<(TouchButton, Instant)>,
+    /// The same for the player's buttons.
+    custom_pulses: Vec<(u32, Instant)>,
     look: (f32, f32),
     slot: Option<usize>,
 }
@@ -652,7 +1113,58 @@ impl TouchControls {
         self.editor.as_ref().map(|e| EditorView {
             selected: e.selected,
             placement: e.selected.map(|c| e.draft.placement(c)).unwrap_or_default(),
+            menu: e.menu,
+            picker: e.picker,
         })
+    }
+
+    /// Opens the layout editor (Options, Controls, Custom Controls).
+    pub fn open_editor(&mut self) {
+        self.release_all();
+        self.editor = Some(Editor {
+            draft: self.settings.clone(),
+            selected: None,
+            drag: None,
+            press: None,
+            menu: None,
+            picker: None,
+        });
+    }
+
+    /// The player's button `id` as the layout in use has it (the editor's
+    /// draft while it is open).
+    pub fn custom(&self, id: u32) -> Option<&CustomButton> {
+        self.editor
+            .as_ref()
+            .map_or(&self.settings, |e| &e.draft)
+            .custom(id)
+    }
+
+    /// Whether a finger is on the player's button `id` now.
+    pub fn pressed_custom(&self, id: u32) -> bool {
+        self.fingers
+            .values()
+            .any(|r| matches!(r, Role::Custom(c) if *c == id))
+    }
+
+    /// The editor's long press: call it every frame while editing.
+    pub fn editor_tick(&mut self, now: Instant) {
+        let Some(editor) = self.editor.as_mut() else {
+            return;
+        };
+        if editor.menu.is_none()
+            && editor.picker.is_none()
+            && let Some(press) = editor.press
+            && !press.moved
+            && now.duration_since(press.since) >= LONG
+        {
+            editor.menu = Some(EditorMenu {
+                at: press.at,
+                target: editor.selected,
+            });
+            editor.drag = None;
+            editor.press = None;
+        }
     }
 
     /// A layout the editor's Done just kept, to write to the settings file.
@@ -670,25 +1182,17 @@ impl TouchControls {
         now: Instant,
     ) {
         if self.editor.is_some() {
-            self.edit_touch(layout, id, phase, at);
+            self.edit_touch(layout, id, phase, at, now);
             return;
         }
         use TouchPhase::*;
         match phase {
             Started => {
-                let role = if let Some(button) = layout.button_at(at) {
-                    match button {
-                        TouchButton::Edit => {
-                            self.release_all();
-                            self.editor = Some(Editor {
-                                draft: self.settings.clone(),
-                                selected: None,
-                                drag: None,
-                            });
-                            return;
-                        }
-                        _ => self.pulse(button, now),
-                    }
+                let role = if let Some(id) = layout.custom_at(at) {
+                    self.custom_pulses.push((id, now + PULSE));
+                    Role::Custom(id)
+                } else if let Some(button) = layout.button_at(at) {
+                    self.pulse(button, now);
                     Role::Button(button)
                 } else if let Some(slot) = layout.slot_at(at) {
                     self.slot = Some(slot);
@@ -747,14 +1251,30 @@ impl TouchControls {
         }
     }
 
-    /// A touch while the editor is open: the toolbar, or picking up and
-    /// dragging a control.
-    fn edit_touch(&mut self, layout: &Layout, id: u64, phase: TouchPhase, at: (f32, f32)) {
+    /// A touch while the editor is open: the key picker or the long press's
+    /// menu when one is open, else the toolbar, or picking up and dragging a
+    /// control (a finger held still opens the menu, see `editor_tick`).
+    fn edit_touch(
+        &mut self,
+        layout: &Layout,
+        id: u64,
+        phase: TouchPhase,
+        at: (f32, f32),
+        now: Instant,
+    ) {
         let Some(editor) = self.editor.as_mut() else {
             return;
         };
         match phase {
             TouchPhase::Started => {
+                if let Some(picker) = editor.picker {
+                    self.pick_key(layout, picker, at);
+                    return;
+                }
+                if let Some(menu) = editor.menu {
+                    self.use_menu(layout, menu, at);
+                    return;
+                }
                 if let Some((button, _)) = EditorButton::toolbar(layout)
                     .into_iter()
                     .find(|(_, area)| area.contains(at))
@@ -771,8 +1291,23 @@ impl TouchControls {
                         grab: (at.0 - cx, at.1 - cy),
                     }
                 });
+                editor.press = Some(Press {
+                    finger: id,
+                    at,
+                    since: now,
+                    moved: false,
+                });
             }
             TouchPhase::Moved => {
+                if let Some(press) = editor.press.as_mut().filter(|p| p.finger == id)
+                    && distance(press.at, at) > STILL
+                {
+                    press.moved = true;
+                }
+                // A finger that has not left its spot is a long press, not a drag.
+                if editor.press.is_some_and(|p| p.finger == id && !p.moved) {
+                    return;
+                }
                 let Some(drag) = editor.drag.filter(|d| d.finger == id) else {
                     return;
                 };
@@ -791,6 +1326,121 @@ impl TouchControls {
             TouchPhase::Ended | TouchPhase::Cancelled => {
                 if editor.drag.is_some_and(|d| d.finger == id) {
                     editor.drag = None;
+                }
+                if editor.press.is_some_and(|p| p.finger == id) {
+                    editor.press = None;
+                }
+            }
+        }
+    }
+
+    /// A touch in the key picker: a key binds it to the button, the rest are
+    /// its page and unbind and cancel buttons; a touch off them does nothing.
+    fn pick_key(&mut self, layout: &Layout, picker: Picker, at: (f32, f32)) {
+        let Some(editor) = self.editor.as_mut() else {
+            return;
+        };
+        let grid = picker.grid(layout);
+        let Some(hit) = grid
+            .cells
+            .iter()
+            .find(|(_, area)| area.contains(at))
+            .map(|(hit, _)| *hit)
+        else {
+            return;
+        };
+        match hit {
+            PickerHit::Key(name) => {
+                editor.draft.set_bind(picker.id, Bind::Key(name.to_owned()));
+                editor.picker = None;
+            }
+            PickerHit::Clear => {
+                editor.draft.set_bind(picker.id, Bind::Unbound);
+                editor.picker = None;
+            }
+            PickerHit::Cancel => editor.picker = None,
+            PickerHit::Prev => {
+                editor.picker = Some(Picker {
+                    page: grid.page.saturating_sub(1),
+                    ..picker
+                });
+            }
+            PickerHit::Next => {
+                editor.picker = Some(Picker {
+                    page: (grid.page + 1).min(grid.pages - 1),
+                    ..picker
+                });
+            }
+        }
+    }
+
+    /// A touch while the long press's menu is open: it closes the menu, and
+    /// when it is on a usable item, that item happens.
+    fn use_menu(&mut self, layout: &Layout, menu: EditorMenu, at: (f32, f32)) {
+        let Some(editor) = self.editor.as_mut() else {
+            return;
+        };
+        editor.menu = None;
+        let Some(item) = menu
+            .items(layout)
+            .into_iter()
+            .find(|(_, area, usable)| *usable && area.contains(at))
+            .map(|(item, _, _)| item)
+        else {
+            return;
+        };
+        let safe = layout.safe;
+        let fraction = |(x, y): (f32, f32)| {
+            (
+                ((x - safe.x) / safe.w.max(1.0)).clamp(0.0, 1.0),
+                ((y - safe.y) / safe.h.max(1.0)).clamp(0.0, 1.0),
+            )
+        };
+        let at_menu = Placement {
+            centre: Some(fraction(menu.at)),
+            ..Placement::default()
+        };
+        match item {
+            MenuItem::Add => {
+                if let Some(id) = editor.draft.add_custom(Bind::Unbound, at_menu) {
+                    editor.selected = Some(Control::Custom(id));
+                }
+            }
+            MenuItem::Copy => {
+                let Some(target) = menu.target else {
+                    return;
+                };
+                let bind = match target {
+                    Control::Custom(id) => editor.draft.custom(id).map(|c| c.bind.clone()),
+                    Control::Button(b) => Some(Bind::Button(b)),
+                    _ => None,
+                };
+                let (cx, cy) = layout.item(target).area.centre();
+                let placement = Placement {
+                    centre: Some(fraction((cx + COPY_OFFSET, cy + COPY_OFFSET))),
+                    hidden: false,
+                    ..editor.draft.placement(target)
+                };
+                if let Some(bind) = bind
+                    && let Some(id) = editor.draft.add_custom(bind, placement)
+                {
+                    editor.selected = Some(Control::Custom(id));
+                }
+            }
+            MenuItem::Keybind => {
+                let id = match menu.target {
+                    Some(Control::Custom(id)) => Some(id),
+                    _ => editor.draft.add_custom(Bind::Unbound, at_menu),
+                };
+                if let Some(id) = id {
+                    editor.selected = Some(Control::Custom(id));
+                    editor.picker = Some(Picker { id, page: 0 });
+                }
+            }
+            MenuItem::Delete => {
+                if let Some(Control::Custom(id)) = menu.target {
+                    editor.draft.remove_custom(id);
+                    editor.selected = None;
                 }
             }
         }
@@ -812,7 +1462,9 @@ impl TouchControls {
         let targets: Vec<Control> = match editor.selected {
             Some(c) => vec![c],
             None if button == EditorButton::Hide => Vec::new(),
-            None => Control::all().collect(),
+            None => Control::all()
+                .chain(editor.draft.customs().iter().map(|c| Control::Custom(c.id)))
+                .collect(),
         };
         for control in targets {
             let mut p = editor.draft.placement(control);
@@ -841,11 +1493,13 @@ impl TouchControls {
     pub fn release_all(&mut self) {
         self.fingers.clear();
         self.pulses.clear();
+        self.custom_pulses.clear();
         self.sprinting = false;
         self.look = (0.0, 0.0);
         self.slot = None;
         if let Some(editor) = &mut self.editor {
             editor.drag = None;
+            editor.press = None;
         }
     }
 
@@ -874,18 +1528,22 @@ impl TouchControls {
     /// taken. Nothing while the editor is open.
     pub fn frame(&mut self, layout: &Layout, now: Instant) -> TouchFrame {
         if self.editor.is_some() {
+            self.editor_tick(now);
             return TouchFrame::default();
         }
         self.pulses.retain(|(_, until)| *until > now);
+        self.custom_pulses.retain(|(_, until)| *until > now);
         let mut held: Vec<TouchButton> = self.pulses.iter().map(|(b, _)| *b).collect();
+        let mut down: Vec<u32> = self.custom_pulses.iter().map(|(id, _)| *id).collect();
         let mut stick = [0.0; 2];
         let mut stick_down = false;
         let radius = layout.stick_radius;
         for role in self.fingers.values_mut() {
             match role {
-                Role::Button(b) if *b != TouchButton::Edit => {
+                Role::Button(b) => {
                     held.push(*b);
                 }
+                Role::Custom(id) => down.push(*id),
                 Role::Stick { origin, at } => {
                     let k = knob(*origin, *at, radius);
                     stick = [(k.0 - origin.0) / radius, -(k.1 - origin.1) / radius];
@@ -913,10 +1571,23 @@ impl TouchControls {
         if self.sprinting {
             held.push(TouchButton::Sprint);
         }
+        // The player's buttons: a copy of a built-in one is that button held;
+        // a key is held as the keyboard's.
+        let mut keys = Vec::new();
+        for id in down {
+            match self.settings.custom(id).map(|c| &c.bind) {
+                Some(Bind::Button(b)) => held.push(*b),
+                Some(Bind::Key(name)) => keys.push(name.clone()),
+                _ => {}
+            }
+        }
+        keys.sort();
+        keys.dedup();
         held.sort_by_key(|b| *b as u8);
         held.dedup();
         TouchFrame {
             held,
+            keys,
             stick,
             look: std::mem::take(&mut self.look),
             slot: self.slot.take(),
