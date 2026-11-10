@@ -293,11 +293,9 @@ fn a_second_finger_in_the_stick_area_looks() {
     assert_eq!(f.look, (10.0, 0.0));
 }
 
-/// Opens the editor with a tap on its button.
-fn open_editor(t: &mut TouchControls, l: &Layout, now: Instant) {
-    let at = centre(l, TouchButton::Edit);
-    t.touch(l, 99, Started, at, now);
-    t.touch(l, 99, Ended, at, now);
+/// Opens the editor, as Options, Controls, Custom Controls does.
+fn open_editor(t: &mut TouchControls, _l: &Layout, _now: Instant) {
+    t.open_editor();
     assert!(t.editing());
 }
 
@@ -428,12 +426,12 @@ fn with_nothing_selected_reset_puts_everything_back() {
 }
 
 #[test]
-fn the_editors_button_and_the_hotbar_cant_be_hidden() {
+fn the_hotbar_cant_be_hidden() {
     let mut t = TouchControls::default();
     let now = Instant::now();
     let l = t.layout(W, H, safe());
     open_editor(&mut t, &l, now);
-    for control in [Control::Button(TouchButton::Edit), Control::Hotbar] {
+    for control in [Control::Hotbar] {
         let l = t.layout(W, H, safe());
         t.touch(&l, 1, Started, l.item(control).area.centre(), now);
         t.touch(&l, 1, Ended, l.item(control).area.centre(), now);
@@ -515,11 +513,8 @@ fn the_settings_file_skips_what_it_cant_read_and_keeps_values_in_range() {
         (sneak.size, sneak.opacity, sneak.hidden),
         (SIZES.1, OPACITIES.0, true)
     );
-    // The editor's button never hides: it is the way back into the editor.
-    assert_eq!(
-        s.placement(Control::Button(TouchButton::Edit)),
-        Placement::default()
-    );
+    // The old Edit button is gone: its line is skipped.
+    assert_eq!(s.customs().len(), 0);
     assert_eq!(
         s.placement(Control::Button(TouchButton::Jump)),
         Placement::default()
@@ -562,4 +557,351 @@ fn the_editors_toolbar_covers_no_control_where_they_start() {
             );
         }
     }
+}
+
+fn custom_key(s: &mut TouchSettings, key: &str, at: (f32, f32)) -> u32 {
+    s.add_custom(
+        Bind::Key(key.to_owned()),
+        Placement {
+            centre: Some(at),
+            ..Placement::default()
+        },
+    )
+    .expect("room for another button")
+}
+
+#[test]
+fn a_button_the_player_added_holds_its_key_while_the_finger_is_down() {
+    let mut s = TouchSettings::default();
+    let id = custom_key(&mut s, "key.keyboard.f7", (0.5, 0.5));
+    let l = Layout::new(W, H, safe(), &s);
+    let mut t = TouchControls::default();
+    t.settings = s;
+    let now = Instant::now();
+    let at = l.item(Control::Custom(id)).area.centre();
+    t.touch(&l, 1, Started, at, now);
+    let f = t.frame(&l, after(now, 100));
+    assert_eq!(f.keys, ["key.keyboard.f7"]);
+    assert!(f.held.is_empty());
+    assert!(t.pressed_custom(id));
+    t.touch(&l, 1, Ended, at, after(now, 200));
+    assert!(t.frame(&l, after(now, 300)).keys.is_empty());
+    // A quick tap still lasts a game tick.
+    t.touch(&l, 2, Started, at, after(now, 1000));
+    t.touch(&l, 2, Ended, at, after(now, 1000));
+    assert_eq!(t.frame(&l, after(now, 1020)).keys, ["key.keyboard.f7"]);
+    assert!(t.frame(&l, after(now, 1500)).keys.is_empty());
+}
+
+#[test]
+fn a_button_with_no_key_does_nothing_and_a_hidden_one_cant_be_pressed() {
+    let mut s = TouchSettings::default();
+    let blank = s
+        .add_custom(
+            Bind::Unbound,
+            Placement {
+                centre: Some((0.4, 0.5)),
+                ..Placement::default()
+            },
+        )
+        .unwrap();
+    let hidden = s
+        .add_custom(
+            Bind::Key("key.keyboard.g".to_owned()),
+            Placement {
+                centre: Some((0.6, 0.5)),
+                hidden: true,
+                ..Placement::default()
+            },
+        )
+        .unwrap();
+    let l = Layout::new(W, H, safe(), &s);
+    let mut t = TouchControls::default();
+    t.settings = s;
+    let now = Instant::now();
+    t.touch(&l, 1, Started, l.item(Control::Custom(blank)).area.centre(), now);
+    let f = t.frame(&l, now);
+    assert!(f.keys.is_empty() && f.held.is_empty());
+    assert_eq!(l.custom_at(l.item(Control::Custom(hidden)).area.centre()), None);
+}
+
+#[test]
+fn a_copy_of_a_built_in_button_does_what_it_does() {
+    let mut s = TouchSettings::default();
+    let id = s
+        .add_custom(
+            Bind::Button(TouchButton::Jump),
+            Placement {
+                centre: Some((0.5, 0.4)),
+                ..Placement::default()
+            },
+        )
+        .unwrap();
+    let l = Layout::new(W, H, safe(), &s);
+    let mut t = TouchControls::default();
+    t.settings = s;
+    let now = Instant::now();
+    t.touch(&l, 1, Started, l.item(Control::Custom(id)).area.centre(), now);
+    assert_eq!(t.frame(&l, after(now, 10)).held, [TouchButton::Jump]);
+}
+
+#[test]
+fn a_long_press_opens_the_menu_and_copy_copies_the_button_under_the_finger() {
+    let mut t = TouchControls::default();
+    let now = Instant::now();
+    t.open_editor();
+    let l = t.layout(W, H, safe());
+    let jump = centre(&l, TouchButton::Jump);
+    t.touch(&l, 1, Started, jump, now);
+    // Held still, but not long enough yet.
+    t.editor_tick(after(now, 100));
+    assert!(t.editor().unwrap().menu.is_none());
+    t.editor_tick(after(now, 600));
+    let menu = t.editor().unwrap().menu.expect("a long press opens the menu");
+    assert_eq!(menu.target, Some(Control::Button(TouchButton::Jump)));
+    let items = menu.items(&l);
+    let usable = |item| items.iter().find(|(i, _, _)| *i == item).unwrap().2;
+    assert!(usable(MenuItem::Add) && usable(MenuItem::Copy) && usable(MenuItem::Keybind));
+    // Only the player's own buttons can be deleted.
+    assert!(!usable(MenuItem::Delete));
+    let copy = items.iter().find(|(i, _, _)| *i == MenuItem::Copy).unwrap().1;
+    t.touch(&l, 2, Started, copy.centre(), after(now, 700));
+    let view = t.editor().unwrap();
+    assert!(view.menu.is_none());
+    let Some(Control::Custom(id)) = view.selected else {
+        panic!("the copy is picked: {:?}", view.selected);
+    };
+    // Done keeps it, and it holds Jump like the original.
+    let l = t.layout(W, H, safe());
+    t.touch(&l, 3, Started, toolbar(&l, EditorButton::Done), after(now, 800));
+    assert!(!t.editing());
+    assert_eq!(
+        t.settings.custom(id).map(|c| c.bind.clone()),
+        Some(Bind::Button(TouchButton::Jump))
+    );
+    let l = t.layout(W, H, safe());
+    let at = l.item(Control::Custom(id)).area.centre();
+    t.touch(&l, 4, Started, at, after(now, 900));
+    assert_eq!(t.frame(&l, after(now, 910)).held, [TouchButton::Jump]);
+}
+
+#[test]
+fn a_finger_that_moves_is_a_drag_not_a_long_press() {
+    let mut t = TouchControls::default();
+    let now = Instant::now();
+    t.open_editor();
+    let l = t.layout(W, H, safe());
+    let jump = centre(&l, TouchButton::Jump);
+    t.touch(&l, 1, Started, jump, now);
+    t.touch(&l, 1, Moved, (jump.0 - 40.0, jump.1), now);
+    t.editor_tick(after(now, 900));
+    assert!(t.editor().unwrap().menu.is_none());
+}
+
+#[test]
+fn keybind_on_empty_ground_adds_a_button_and_the_picker_binds_a_key_to_it() {
+    let mut t = TouchControls::default();
+    let now = Instant::now();
+    t.open_editor();
+    let l = t.layout(W, H, safe());
+    let spot = (300.0, 100.0);
+    assert_eq!(l.control_at(spot), None);
+    t.touch(&l, 1, Started, spot, now);
+    t.editor_tick(after(now, 600));
+    let menu = t.editor().unwrap().menu.unwrap();
+    assert_eq!(menu.target, None);
+    let keybind = menu
+        .items(&l)
+        .into_iter()
+        .find(|(i, _, _)| *i == MenuItem::Keybind)
+        .unwrap()
+        .1;
+    t.touch(&l, 2, Started, keybind.centre(), after(now, 700));
+    let picker = t.editor().unwrap().picker.expect("the picker opens");
+    // The new button waits for its key.
+    assert_eq!(
+        t.editor().unwrap().selected,
+        Some(Control::Custom(picker.id))
+    );
+    let grid = picker.grid(&l);
+    let f7 = grid
+        .cells
+        .iter()
+        .find(|(hit, _)| *hit == PickerHit::Key("key.keyboard.f7"))
+        .expect("F7 is on the first page")
+        .1;
+    t.touch(&l, 3, Started, f7.centre(), after(now, 800));
+    assert!(t.editor().unwrap().picker.is_none());
+    t.touch(&l, 4, Started, toolbar(&l, EditorButton::Done), after(now, 900));
+    assert_eq!(
+        t.settings.custom(picker.id).map(|c| c.bind.clone()),
+        Some(Bind::Key("key.keyboard.f7".to_owned()))
+    );
+    // It sits where the finger was.
+    let l = t.layout(W, H, safe());
+    let (cx, cy) = l.item(Control::Custom(picker.id)).area.centre();
+    assert!((cx - spot.0).abs() < 0.5 && (cy - spot.1).abs() < 0.5, "{cx},{cy}");
+}
+
+#[test]
+fn keybind_on_one_of_the_players_buttons_rebinds_it_and_delete_removes_it() {
+    let mut s = TouchSettings::default();
+    let id = custom_key(&mut s, "key.keyboard.f7", (0.5, 0.5));
+    let mut t = TouchControls::default();
+    t.settings = s;
+    let now = Instant::now();
+    t.open_editor();
+    let l = t.layout(W, H, safe());
+    let at = l.item(Control::Custom(id)).area.centre();
+    t.touch(&l, 1, Started, at, now);
+    t.editor_tick(after(now, 600));
+    let menu = t.editor().unwrap().menu.unwrap();
+    assert_eq!(menu.target, Some(Control::Custom(id)));
+    let pick = |item| {
+        menu.items(&l)
+            .into_iter()
+            .find(|(i, _, _)| *i == item)
+            .unwrap()
+            .1
+            .centre()
+    };
+    t.touch(&l, 2, Started, pick(MenuItem::Keybind), after(now, 700));
+    let picker = t.editor().unwrap().picker.unwrap();
+    assert_eq!(picker.id, id);
+    // Unbinding it leaves the button with no key.
+    let clear = picker
+        .grid(&l)
+        .cells
+        .iter()
+        .find(|(hit, _)| *hit == PickerHit::Clear)
+        .unwrap()
+        .1;
+    t.touch(&l, 3, Started, clear.centre(), after(now, 800));
+    t.editor_tick(after(now, 900));
+    // Pressed long again: delete it.
+    t.touch(&l, 4, Started, at, after(now, 1000));
+    t.editor_tick(after(now, 1600));
+    let menu = t.editor().unwrap().menu.unwrap();
+    let delete = menu
+        .items(&l)
+        .into_iter()
+        .find(|(i, _, _)| *i == MenuItem::Delete)
+        .unwrap();
+    assert!(delete.2);
+    t.touch(&l, 5, Started, delete.1.centre(), after(now, 1700));
+    t.touch(&l, 6, Started, toolbar(&l, EditorButton::Done), after(now, 1800));
+    assert!(t.settings.customs().is_empty());
+}
+
+#[test]
+fn a_touch_off_the_menu_closes_it_and_does_nothing() {
+    let mut t = TouchControls::default();
+    let now = Instant::now();
+    t.open_editor();
+    let l = t.layout(W, H, safe());
+    t.touch(&l, 1, Started, (300.0, 100.0), now);
+    t.editor_tick(after(now, 600));
+    assert!(t.editor().unwrap().menu.is_some());
+    t.touch(&l, 2, Started, (500.0, 200.0), after(now, 700));
+    assert!(t.editor().unwrap().menu.is_none());
+    assert_eq!(t.layout(W, H, safe()), layout());
+}
+
+#[test]
+fn the_picker_pages_stay_in_the_safe_area_and_page_buttons_turn_them() {
+    let small = Area {
+        x: 0.0,
+        y: 0.0,
+        w: 427.0,
+        h: 240.0,
+    };
+    let l = Layout::new(427.0, 240.0, small, &TouchSettings::default());
+    let first = Picker { id: 0, page: 0 }.grid(&l);
+    assert!(first.pages > 1, "{} pages", first.pages);
+    // A page past the last shows the last.
+    let last = Picker { id: 0, page: 99 }.grid(&l);
+    assert_eq!(last.page, last.pages - 1);
+    for grid in [&first, &last] {
+        for (hit, a) in &grid.cells {
+            assert!(
+                a.x >= small.x
+                    && a.y >= small.y
+                    && a.x + a.w <= small.x + small.w
+                    && a.y + a.h <= small.y + small.h,
+                "{hit:?} off the screen"
+            );
+        }
+    }
+    // Every key is on some page, once.
+    let mut seen = Vec::new();
+    for page in 0..first.pages {
+        for (hit, _) in Picker { id: 0, page }.grid(&l).cells {
+            if let PickerHit::Key(name) = hit {
+                seen.push(name);
+            }
+        }
+    }
+    assert_eq!(seen, PICKER_KEYS);
+    // Next turns the page and Prev turns it back.
+    let mut t = TouchControls::default();
+    t.open_editor();
+    let id = t.editor.as_mut().unwrap().draft.add_custom(Bind::Unbound, Placement::default()).unwrap();
+    t.editor.as_mut().unwrap().picker = Some(Picker { id, page: 0 });
+    let next = first.cells.iter().find(|(h, _)| *h == PickerHit::Next).unwrap().1;
+    t.touch(&l, 1, Started, next.centre(), Instant::now());
+    assert_eq!(t.editor().unwrap().picker.unwrap().page, 1);
+    let prev = first.cells.iter().find(|(h, _)| *h == PickerHit::Prev).unwrap().1;
+    t.touch(&l, 2, Started, prev.centre(), Instant::now());
+    assert_eq!(t.editor().unwrap().picker.unwrap().page, 0);
+    let cancel = first.cells.iter().find(|(h, _)| *h == PickerHit::Cancel).unwrap().1;
+    t.touch(&l, 3, Started, cancel.centre(), Instant::now());
+    assert!(t.editor().unwrap().picker.is_none());
+}
+
+#[test]
+fn every_key_the_picker_offers_is_a_key_the_game_knows() {
+    for name in PICKER_KEYS {
+        assert!(crate::keybinds::key_code(name).is_some(), "{name}");
+    }
+    let mut sorted = PICKER_KEYS.to_vec();
+    sorted.sort_unstable();
+    sorted.dedup();
+    assert_eq!(sorted.len(), PICKER_KEYS.len(), "a key is offered twice");
+}
+
+#[test]
+fn the_players_buttons_are_kept_in_the_settings_file() {
+    let mut s = TouchSettings::default();
+    s.add_custom(
+        Bind::Key("key.keyboard.f7".to_owned()),
+        Placement {
+            centre: Some((0.25, 0.5)),
+            size: 1.5,
+            opacity: 0.8,
+            hidden: false,
+        },
+    )
+    .unwrap();
+    s.add_custom(Bind::Button(TouchButton::Jump), Placement::default())
+        .unwrap();
+    let text = s.to_text();
+    assert_eq!(
+        text,
+        "custom0=key.keyboard.f7,0.2500,0.5000,1.50,0.80,0\ncustom1=button:jump,-,-,1.00,1.00,0\n"
+    );
+    assert_eq!(TouchSettings::parse(&text), s);
+    // A key the game doesn't know, or a repeated number, is skipped.
+    let bad = TouchSettings::parse(
+        "custom0=key.keyboard.nope,-,-,1,1,0\ncustom1=-,-,-,1,1,0\ncustom1=-,-,-,1,1,0\ncustomx=-,-,-,1,1,0\n",
+    );
+    assert_eq!(bad.customs().len(), 1);
+}
+
+#[test]
+fn no_more_than_the_most_can_be_added() {
+    let mut s = TouchSettings::default();
+    for _ in 0..MAX_CUSTOM {
+        assert!(s.add_custom(Bind::Unbound, Placement::default()).is_some());
+    }
+    assert!(s.add_custom(Bind::Unbound, Placement::default()).is_none());
 }
