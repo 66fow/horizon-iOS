@@ -3054,7 +3054,12 @@ fn same_values(
 
 /// The most changed blocks one frame relights itself (`Streaming::relight_edits`): a 16^3
 /// section's worth. Past it, the columns are lit again whole on the workers.
+#[cfg(not(target_os = "ios"))]
 const INLINE_RELIGHT_MAX: usize = 4096;
+/// iOS: a quarter of that on the render thread (a big edit's relight, a blast or a
+/// piston, was a frame's hitch on an A13); the rest is lit again whole on the workers.
+#[cfg(target_os = "ios")]
+const INLINE_RELIGHT_MAX: usize = 1024;
 
 /// Splits edits at `positions` into the columns to light again whole and the
 /// edits to relight in place. An edited column is lit whole with its
