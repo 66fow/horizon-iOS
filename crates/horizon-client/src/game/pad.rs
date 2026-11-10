@@ -46,6 +46,8 @@ pub(super) struct Pads {
     pub(super) touch_debug: bool,
     /// The touch Sneak button is pressing the sneak key (touch.rs).
     pub(super) touch_sneak: bool,
+    /// The keys the touch controls' own buttons hold down (touch.rs).
+    pub(super) touch_keys: Vec<KeyCode>,
     /// The controls' layout of the last frame, for fingers already down
     /// (touch.rs).
     pub(super) touch_layout: Option<(horizon_client_input::touch::Layout, f32)>,
