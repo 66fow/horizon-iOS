@@ -1334,6 +1334,9 @@ enum Act {
     OpenModFolder,
     /// The Mods page's Get Mods button (iOS): open the mods screen.
     GetMods,
+    /// The Controls page's Custom Controls button (iOS): open the touch
+    /// controls' layout editor.
+    EditTouchControls,
     /// Accessibility's "Accessibility Help" link
     /// (`AccessibilityOptionsScreen.addFooter`'s openLinkButton).
     AccessibilityHelp,
@@ -1472,6 +1475,8 @@ pub enum Event {
     OpenModFolder,
     /// The Mods page's Get Mods button (iOS, which has no launcher): open the mods screen.
     GetMods,
+    /// The Controls page's Custom Controls button (iOS): open the touch controls' editor.
+    EditTouchControls,
     /// Accessibility's Help link: confirm and open
     /// `CommonLinks.ACCESSIBILITY_HELP` over the options screen.
     AccessibilityHelp,
@@ -2812,6 +2817,20 @@ impl OptionsUi {
                 )];
                 let controls = vanilla_control_options();
                 rows.extend(pairs(&controls));
+                // The touch controls' layout editor (iOS): move, resize and hide
+                // them, add buttons and bind keys to them.
+                if cfg!(target_os = "ios") {
+                    rows.push(Row::Buttons(
+                        button(
+                            0.0,
+                            0.0,
+                            310.0,
+                            tr("horizon.pages.open.touch_controls"),
+                            Act::EditTouchControls,
+                        ),
+                        None,
+                    ));
+                }
                 // Horizon's controller page, after vanilla's rows.
                 rows.push(Row::Buttons(
                     button(
@@ -4317,6 +4336,7 @@ impl OptionsUi {
                         Act::NativeButton(i, b) => events.push(Event::NativeButton(i, b)),
                         Act::OpenModFolder => events.push(Event::OpenModFolder),
                         Act::GetMods => events.push(Event::GetMods),
+                        Act::EditTouchControls => events.push(Event::EditTouchControls),
                         Act::PvpPreset => {
                             crate::pvp::apply_preset(s);
                             events.push(Event::Changed);
@@ -5280,6 +5300,7 @@ impl OptionsUi {
                         Act::NativeButton(i, b) => events.push(Event::NativeButton(i, b)),
                         Act::OpenModFolder => events.push(Event::OpenModFolder),
                         Act::GetMods => events.push(Event::GetMods),
+                        Act::EditTouchControls => events.push(Event::EditTouchControls),
                         Act::PvpPreset => {
                             crate::pvp::apply_preset(s);
                             events.push(Event::Changed);
