@@ -84,6 +84,9 @@ pub struct Filters {
     pub environment: Option<Environment>,
     /// None: by relevance with search text, else by downloads.
     pub sort: Option<Sort>,
+    /// Only what works on the selected instance: Horizon's registry leaves out the native mods
+    /// with no version that builds on it.
+    pub works_on: bool,
 }
 
 impl Filters {
@@ -156,6 +159,15 @@ pub struct Link {
     pub url: String,
 }
 
+/// A project's GitHub repository and how many stars it has: a registry project whose source is
+/// on GitHub.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GitHub {
+    /// `https://github.com/<owner>/<repo>`.
+    pub url: String,
+    pub stars: u64,
+}
+
 /// A project's page.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Details {
@@ -164,7 +176,10 @@ pub struct Details {
     pub gallery: Vec<Image>,
     pub links: Vec<Link>,
     pub authors: Vec<String>,
+    /// Modrinth's followers; a registry project has none (it shows [`Details::github`] instead).
     pub followers: u64,
+    /// Where to star a registry project, and its stars there.
+    pub github: Option<GitHub>,
     pub published: String,
     pub updated: String,
     pub categories: Vec<String>,
@@ -254,6 +269,7 @@ pub fn modrinth_details(project: &Value, members: &Value) -> Details {
         categories,
         client_side: text(&project["client_side"]),
         server_side: text(&project["server_side"]),
+        github: None,
     }
 }
 

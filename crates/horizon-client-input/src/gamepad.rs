@@ -1,11 +1,17 @@
 //! Controllers: Horizon's own feature (vanilla 26.3 has no gamepad input).
-//! The default layout is Bedrock Edition's; see docs/controllers.md.
+//! Its default buttons are Horizon's own; analog walking and toggle sneak follow Bedrock Edition on
+//! consoles. See docs/controllers.md.
 //!
 //! This module is the backend-free part: positional buttons, the action
 //! bindings, deadzones and the look curve, button edges from successive pad
 //! states, and `horizon-controller.txt`, kept next to `options.txt` so that
 //! file stays exactly vanilla's. The game reads the pads with gilrs.
-use std::{collections::BTreeMap, fs, path::Path};
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::Path,
+    time::{Duration, Instant},
+};
 
 pub const FILE: &str = "horizon-controller.txt";
 
@@ -75,49 +81,6 @@ impl Button {
     }
     fn bit(self) -> u32 {
         1 << self as u32
-    }
-    /// What is printed on the button for a pad family (`Auto` reads as Xbox).
-    pub fn label(self, style: GlyphStyle) -> &'static str {
-        let i = self as usize;
-        match style {
-            GlyphStyle::PlayStation => [
-                "×", "○", "□", "△", "L1", "R1", "L2", "R2", "Create", "Options", "L3", "R3", "↑",
-                "↓", "←", "→",
-            ][i],
-            GlyphStyle::Nintendo => [
-                "B", "A", "Y", "X", "L", "R", "ZL", "ZR", "−", "+", "LS", "RS", "↑", "↓", "←", "→",
-            ][i],
-            GlyphStyle::Xbox | GlyphStyle::Auto => [
-                "A", "B", "X", "Y", "LB", "RB", "LT", "RT", "View", "Menu", "LS", "RS", "↑", "↓",
-                "←", "→",
-            ][i],
-        }
-    }
-    /// The glyph's colour (RGB): face buttons in their family's colours,
-    /// the rest white.
-    pub fn color(self, style: GlyphStyle) -> [u8; 3] {
-        let face = match self {
-            Button::South => 0,
-            Button::East => 1,
-            Button::West => 2,
-            Button::North => 3,
-            _ => return [255, 255, 255],
-        };
-        match style {
-            GlyphStyle::PlayStation => [
-                [124, 178, 232],
-                [235, 110, 110],
-                [222, 145, 205],
-                [92, 205, 170],
-            ][face],
-            GlyphStyle::Nintendo => [255, 255, 255],
-            GlyphStyle::Xbox | GlyphStyle::Auto => [
-                [110, 200, 90],
-                [235, 90, 80],
-                [80, 150, 240],
-                [240, 200, 60],
-            ][face],
-        }
     }
     /// The face button that plays this one's part on a Nintendo pad going by its letters
     /// (`PadSettings::nintendo_letters`): the A it prints on the right is South, which confirms
@@ -290,13 +253,24 @@ impl Activity {
 /// Horizon's pad-only actions (no vanilla key mapping).
 pub const HOTBAR_PREVIOUS: &str = "pad.hotbarPrevious";
 pub const HOTBAR_NEXT: &str = "pad.hotbarNext";
+/// Held, opens the radial menu (`radial.rs`).
+pub const RADIAL: &str = "pad.radial";
+
+mod radial_file;
+pub use radial_file::{RadialMode, RadialStick, opener_refused};
+
+/// The `bindLayout` the settings file is written in. 1: the defaults of the binds list as they
+/// are; 2: the radial menu's opener resolved against the player's own buttons.
+const BIND_LAYOUT: u32 = 2;
+/// The layout from which the file, not the default, says where the opener is.
+const OPENER_LAYOUT: u32 = 2;
 
 /// Bindable actions and their default buttons: vanilla key mappings (the
 /// game acts as their default key) and Horizon's pad-only actions. Start is
 /// always pause / back and isn't listed.
 pub const ACTIONS: &[(&str, Option<Button>)] = &[
     ("key.jump", Some(Button::South)),
-    ("key.drop", Some(Button::East)),
+    ("key.drop", Some(Button::DPadDown)),
     ("key.swapOffhand", Some(Button::West)),
     ("key.inventory", Some(Button::North)),
     (HOTBAR_PREVIOUS, Some(Button::LeftBumper)),
@@ -305,15 +279,32 @@ pub const ACTIONS: &[(&str, Option<Button>)] = &[
     ("key.attack", Some(Button::RightTrigger)),
     ("key.sprint", Some(Button::LeftStick)),
     ("key.sneak", Some(Button::RightStick)),
-    ("key.togglePerspective", Some(Button::DPadUp)),
+    ("key.togglePerspective", Some(Button::Select)),
     ("key.pickItem", Some(Button::DPadLeft)),
-    ("key.chat", Some(Button::DPadRight)),
-    ("key.advancements", Some(Button::DPadDown)),
-    ("key.playerlist", Some(Button::Select)),
+    ("key.chat", Some(Button::DPadUp)),
+    (RADIAL, Some(Button::DPadRight)),
+    ("key.advancements", None),
+    ("key.playerlist", None),
     ("key.command", None),
     ("key.screenshot", None),
     ("key.toggleGui", None),
     ("key.smoothCamera", None),
+    // Horizon's emote wheel: no button is free by default; the stick's cursor picks.
+    ("key.emote", None),
+    ("key.fullscreen", None),
+    ("key.socialInteractions", None),
+    ("key.quickActions", None),
+    ("key.saveToolbarActivator", None),
+    ("key.loadToolbarActivator", None),
+    ("key.hotbar.1", None),
+    ("key.hotbar.2", None),
+    ("key.hotbar.3", None),
+    ("key.hotbar.4", None),
+    ("key.hotbar.5", None),
+    ("key.hotbar.6", None),
+    ("key.hotbar.7", None),
+    ("key.hotbar.8", None),
+    ("key.hotbar.9", None),
 ];
 
 /// How a bindable action reaches the game: one of its own handlers, shared
@@ -324,10 +315,17 @@ pub enum Route {
     HotbarStep {
         next: bool,
     },
+    Radial,
     /// Held, or flipped when the pad's toggle sneak is on.
     Sneak,
     Screenshot,
     SmoothCamera,
+    Fullscreen,
+    /// F3's debug screen, shown or hidden as F3 alone does.
+    DebugOverlay,
+    /// Does nothing by itself: what reads it asks whether the button is held
+    /// (`Minecraft.handleKeybinds`' toolbar keys, held with a hotbar key).
+    Held,
     Key(winit::keyboard::KeyCode),
     Mouse(winit::event::MouseButton),
 }
@@ -337,9 +335,13 @@ pub fn route(action: &str) -> Option<Route> {
     match action {
         HOTBAR_PREVIOUS => Some(Route::HotbarStep { next: false }),
         HOTBAR_NEXT => Some(Route::HotbarStep { next: true }),
+        RADIAL => Some(Route::Radial),
         "key.sneak" => Some(Route::Sneak),
         "key.screenshot" => Some(Route::Screenshot),
         "key.smoothCamera" => Some(Route::SmoothCamera),
+        "key.fullscreen" => Some(Route::Fullscreen),
+        "key.debug.overlay" => Some(Route::DebugOverlay),
+        "key.saveToolbarActivator" | "key.loadToolbarActivator" => Some(Route::Held),
         _ => {
             let default = crate::keybinds::KeyBinds::default_of(action);
             crate::keybinds::mouse_button(default)
@@ -349,13 +351,152 @@ pub fn route(action: &str) -> Option<Route> {
     }
 }
 
+/// The radial menu's opener, as the binds list and the gameplay guide name it.
+pub const RADIAL_CAPTION: &str = "horizon.pad.action.radial";
+
 /// An action's name in the binds list: vanilla's translation key, or
 /// Horizon's own English for the pad-only actions.
 pub fn action_caption(action: &str) -> &str {
     match action {
         HOTBAR_PREVIOUS => "Hotbar: Previous Slot",
         HOTBAR_NEXT => "Hotbar: Next Slot",
+        RADIAL => RADIAL_CAPTION,
         other => other,
+    }
+}
+
+/// How long a held drop button throws single items before it throws the rest of the stack.
+pub const DROP_STACK_HOLD: Duration = Duration::from_secs(1);
+
+/// What a held drop button does now, past its press.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DropStep {
+    /// Held key.drop (a repeat reaches `KeyMapping.click` as a press).
+    One,
+    /// Control + key.drop: a pad has no Control to hold, so holding on is how it asks.
+    Stack,
+}
+
+/// A held drop button's repeats: a tap throws one item, as Q does; held, it repeats at the pad's
+/// repeat delay and interval; and held for [`DROP_STACK_HOLD`] it throws what's left.
+#[derive(Clone, Copy, Debug)]
+pub struct HeldDrop {
+    since: Instant,
+    next: Instant,
+}
+impl HeldDrop {
+    pub fn new(now: Instant, delay: Duration) -> Self {
+        Self {
+            since: now,
+            next: now + delay,
+        }
+    }
+    /// The step due at `now`, if any; at most one per call.
+    pub fn due(&mut self, now: Instant, interval: Duration) -> Option<DropStep> {
+        if now < self.next {
+            return None;
+        }
+        self.next = now + interval;
+        Some(if now.duration_since(self.since) >= DROP_STACK_HOLD {
+            DropStep::Stack
+        } else {
+            DropStep::One
+        })
+    }
+}
+
+/// A job a menu's fixed buttons do. Menus aren't rebindable: this is the one map from a job to
+/// its button, and a glyph for a menu asks for the job (`GlyphOf::Menu`), never the button.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MenuJob {
+    /// A: press, take, type.
+    Confirm,
+    /// B: back, close.
+    Back,
+    /// X: the screen's second job (Apply, Options, half a stack, delete a letter).
+    Alternate,
+    /// Y: the screen's third job (the exit, a quick move, a space).
+    Extra,
+    /// LB: the page or tab before.
+    PagePrev,
+    /// RB: the page or tab after.
+    PageNext,
+    /// LT: the group before; held, the modifier (shift, direct craft).
+    GroupPrev,
+    /// RT: the group after.
+    GroupNext,
+    /// View: throw.
+    View,
+    /// Menu (Start): done, and cancelling a binding.
+    Start,
+    /// The left stick pressed in.
+    LeftStick,
+}
+impl MenuJob {
+    pub const ALL: [MenuJob; 11] = [
+        MenuJob::Confirm,
+        MenuJob::Back,
+        MenuJob::Alternate,
+        MenuJob::Extra,
+        MenuJob::PagePrev,
+        MenuJob::PageNext,
+        MenuJob::GroupPrev,
+        MenuJob::GroupNext,
+        MenuJob::View,
+        MenuJob::Start,
+        MenuJob::LeftStick,
+    ];
+    /// The part that does the job (by place; a pad going by its letters is read so the part
+    /// still lands: `PadState::by_letter`).
+    pub const fn button(self) -> Button {
+        match self {
+            MenuJob::Confirm => Button::South,
+            MenuJob::Back => Button::East,
+            MenuJob::Alternate => Button::West,
+            MenuJob::Extra => Button::North,
+            MenuJob::PagePrev => Button::LeftBumper,
+            MenuJob::PageNext => Button::RightBumper,
+            MenuJob::GroupPrev => Button::LeftTrigger,
+            MenuJob::GroupNext => Button::RightTrigger,
+            MenuJob::View => Button::Select,
+            MenuJob::Start => Button::Start,
+            MenuJob::LeftStick => Button::LeftStick,
+        }
+    }
+    /// The job a part does in menus.
+    pub fn of(button: Button) -> Option<MenuJob> {
+        Self::ALL.into_iter().find(|job| job.button() == button)
+    }
+}
+
+/// What a glyph stands for: what the button does, never the button. `pad_glyph::Glyph` is built
+/// from one, so a rebinding or a pad's letters reach every glyph.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GlyphOf {
+    /// A gameplay action (`key.jump`...), on the player's binding.
+    Bound(&'static str),
+    /// A menu's fixed job.
+    Menu(MenuJob),
+}
+impl From<MenuJob> for GlyphOf {
+    fn from(job: MenuJob) -> Self {
+        GlyphOf::Menu(job)
+    }
+}
+impl GlyphOf {
+    /// The part that does it under these settings; none while the action is unbound.
+    pub fn button(self, settings: &PadSettings) -> Option<Button> {
+        match self {
+            GlyphOf::Bound(action) => {
+                // A misspelt action would quietly have no glyph.
+                debug_assert!(
+                    ACTIONS.iter().any(|a| a.0 == action),
+                    "no pad action {action}"
+                );
+                settings.binding(action)
+            }
+            GlyphOf::Menu(job) => Some(job.button()),
+        }
     }
 }
 
@@ -402,14 +543,53 @@ impl GlyphStyle {
         GlyphStyle::PlayStation,
         GlyphStyle::Nintendo,
     ];
-    /// The style for a pad by its USB vendor (Sony, Nintendo; Microsoft,
-    /// Valve's Steam Deck and Steam Input's virtual pad, and everything else
-    /// look like Xbox).
-    pub fn of_vendor(vendor: Option<u16>) -> Self {
-        match vendor {
-            Some(0x054c) => GlyphStyle::PlayStation,
-            Some(0x057e) => GlyphStyle::Nintendo,
+    /// The style for a pad by its USB ids: Sony's and Nintendo's own, and a few officially licensed
+    /// third-party pads made for their consoles. Microsoft, Valve's Steam Deck and Steam Input's
+    /// virtual pad, and everything else look like Xbox.
+    pub fn of_device(vendor: Option<u16>, product: Option<u16>) -> Self {
+        match (vendor, product) {
+            (Some(0x054c), _) => GlyphStyle::PlayStation,
+            (Some(0x057e), _) => GlyphStyle::Nintendo,
+            // HORIPAD 4 FPS and FPS Plus; Razer Raiju; Nacon Revolution Pro.
+            (Some(0x0f0d), Some(0x0055 | 0x0066))
+            | (Some(0x1532), Some(0x1000))
+            | (Some(0x146b), Some(0x0d01)) => GlyphStyle::PlayStation,
+            // HORIPAD for Nintendo Switch; PowerA Wired Plus; PDP Faceoff Wired Pro.
+            (Some(0x0f0d), Some(0x00c1))
+            | (Some(0x20d6), Some(0xa711))
+            | (Some(0x0e6f), Some(0x0180)) => GlyphStyle::Nintendo,
             _ => GlyphStyle::Xbox,
+        }
+    }
+}
+
+/// How much the gameplay guide says.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum GuideDetail {
+    #[default]
+    Full,
+    /// Only what can be done to what's in front of the player or under the crosshair.
+    Basic,
+    Off,
+}
+impl GuideDetail {
+    pub const ALL: [GuideDetail; 3] = [GuideDetail::Full, GuideDetail::Basic, GuideDetail::Off];
+
+    /// The name in `horizon-controller.txt`.
+    pub fn name(self) -> &'static str {
+        match self {
+            GuideDetail::Full => "full",
+            GuideDetail::Basic => "basic",
+            GuideDetail::Off => "off",
+        }
+    }
+
+    /// Reads a name, or the `true` and `false` this option first saved. Anything else is full.
+    pub fn parse(value: &str) -> Self {
+        match value {
+            "basic" => GuideDetail::Basic,
+            "off" | "false" => GuideDetail::Off,
+            _ => GuideDetail::Full,
         }
     }
 }
@@ -461,6 +641,8 @@ pub fn steam_keyboard(choice: TextKeyboard) -> bool {
 pub struct PadSettings {
     pub enabled: bool,
     pub vibration: bool,
+    /// The pad keeps driving the game while its window has no focus.
+    pub play_in_background: bool,
     /// A DualSense's triggers push back (Horizon's; docs/controllers.md).
     pub adaptive_triggers: bool,
     pub lightbar: Lightbar,
@@ -474,12 +656,18 @@ pub struct PadSettings {
     /// The sneak button flips sneaking (Bedrock's default) instead of
     /// holding it, unless vanilla's toggle crouch is on already.
     pub toggle_sneak: bool,
+    /// LT + A on a recipe crafts on every server, not only in single player and on LAN worlds
+    /// found in the server list. Off by default: a server's rules may count a repeated craft as a
+    /// macro.
+    pub craft_on_servers: bool,
     pub glyphs: GlyphStyle,
     /// A Nintendo pad's face buttons go by their letters (A confirms and jumps, as on the
     /// Switch's own menus and keyboard) instead of their places (B, at the bottom, does): on
     /// by default on the Switch only.
     pub nintendo_letters: bool,
     pub keyboard: TextKeyboard,
+    /// The gameplay guide: what the buttons do now, in the HUD's corners while the pad plays.
+    pub guide_detail: GuideDetail,
     /// Menu pointer multiplier, scroll lines/second, and repeat times in seconds.
     pub pointer_speed: f32,
     pub scroll_speed: f32,
@@ -487,12 +675,28 @@ pub struct PadSettings {
     pub repeat_interval: f32,
     /// Action name -> button, `None` for unbound; missing means the default.
     bindings: BTreeMap<&'static str, Option<Button>>,
+    /// The radial menu's pages.
+    pub radial: crate::radial::Pages,
+    /// Whether the radial menu's opener is held or pressed once.
+    pub radial_mode: RadialMode,
+    /// The stick that selects in it.
+    pub radial_stick: RadialStick,
+    /// Lines this game doesn't read (a newer Horizon's settings, an action it doesn't have, a
+    /// button it doesn't know), kept as they were so a save here loses nothing.
+    extra: Vec<(String, String)>,
+    /// The newest `bindLayout` the file has been written in: this game's, or a newer Horizon's,
+    /// kept so that one doesn't resolve its file again as older than it is.
+    bind_layout: u32,
+    /// The opener last used with each stick (`RadialStick::ALL` order), so stepping the Selects
+    /// With row and back gives each stick's own opener again.
+    openers: radial_file::StickOpeners,
 }
 impl Default for PadSettings {
     fn default() -> Self {
         Self {
             enabled: true,
             vibration: true,
+            play_in_background: false,
             adaptive_triggers: true,
             lightbar: Lightbar::Health,
             look_sensitivity: 0.5,
@@ -502,14 +706,22 @@ impl Default for PadSettings {
             look_deadzone: 0.12,
             trigger_threshold: 0.4,
             toggle_sneak: true,
+            craft_on_servers: false,
             glyphs: GlyphStyle::Auto,
             nintendo_letters: cfg!(target_os = "horizon"),
             keyboard: TextKeyboard::Auto,
+            guide_detail: GuideDetail::Full,
             pointer_speed: 1.0,
             scroll_speed: 12.0,
             repeat_delay: 0.35,
             repeat_interval: 0.09,
             bindings: BTreeMap::new(),
+            radial: Default::default(),
+            radial_mode: RadialMode::Hold,
+            radial_stick: RadialStick::Right,
+            extra: Vec::new(),
+            bind_layout: BIND_LAYOUT,
+            openers: radial_file::StickOpeners::default(),
         }
     }
 }
@@ -517,6 +729,10 @@ fn bool_text(v: bool) -> &'static str {
     if v { "true" } else { "false" }
 }
 impl PadSettings {
+    /// A pad of `family` goes by its letters: only a Nintendo pad has letters to go by.
+    pub fn by_letter(&self, family: GlyphStyle) -> bool {
+        self.nintendo_letters && family == GlyphStyle::Nintendo
+    }
     pub fn load(dir: &Path) -> Self {
         fs::read_to_string(dir.join(FILE))
             .map(|t| Self::parse(&t))
@@ -532,6 +748,7 @@ impl PadSettings {
     }
     pub fn parse(text: &str) -> Self {
         let mut s = Self::default();
+        let mut saved_opener = None;
         for line in text.lines() {
             let Some((key, value)) = line.split_once(':') else {
                 continue;
@@ -559,6 +776,7 @@ impl PadSettings {
             match key.trim() {
                 "enabled" => s.enabled = flag(s.enabled),
                 "vibration" => s.vibration = flag(s.vibration),
+                "playInBackground" => s.play_in_background = flag(s.play_in_background),
                 "adaptiveTriggers" => s.adaptive_triggers = flag(s.adaptive_triggers),
                 "lightbar" => s.lightbar = Lightbar::parse(value),
                 "lookSensitivity" => s.look_sensitivity = unit(s.look_sensitivity),
@@ -570,24 +788,104 @@ impl PadSettings {
                     s.trigger_threshold = unit(s.trigger_threshold).clamp(0.1, 0.9)
                 }
                 "toggleSneak" => s.toggle_sneak = flag(s.toggle_sneak),
+                "craftOnServers" => s.craft_on_servers = flag(s.craft_on_servers),
                 "glyphs" => s.glyphs = GlyphStyle::parse(value),
                 "nintendoLetters" => s.nintendo_letters = flag(s.nintendo_letters),
                 "keyboard" => s.keyboard = TextKeyboard::parse(value),
+                "gameplayGuide" => s.guide_detail = GuideDetail::parse(value),
                 "pointerSpeed" => s.pointer_speed = bounded(s.pointer_speed, 0.25, 3.0),
                 "scrollSpeed" => s.scroll_speed = bounded(s.scroll_speed, 1.0, 36.0),
                 "repeatDelay" => s.repeat_delay = bounded(s.repeat_delay, 0.1, 1.0),
                 "repeatInterval" => s.repeat_interval = bounded(s.repeat_interval, 0.03, 0.3),
+                "radialMode" => s.radial_mode = RadialMode::parse(value),
+                "radialStick" => s.radial_stick = RadialStick::parse(value),
+                // Read after the loop, from the whole text.
+                "bindLayout" => {}
+                // The radial menu's pages (`radial::Pages::parse`).
+                other if other.starts_with("radial_") || other == crate::radial::LAYOUT_KEY => {}
                 other => {
-                    if let Some(action) = other.strip_prefix("bind_") {
-                        let button = if value == "none" {
-                            Some(None)
-                        } else {
-                            Button::parse(value).map(Some)
-                        };
-                        if let Some(button) = button {
-                            s.bind(action, button);
-                        }
+                    let known = other
+                        .strip_prefix("bind_")
+                        .filter(|action| ACTIONS.iter().any(|a| a.0 == *action));
+                    let button = if value == "none" {
+                        Some(None)
+                    } else {
+                        Button::parse(value).map(Some)
+                    };
+                    match (known, button) {
+                        // The opener once the selecting stick is known.
+                        (Some(RADIAL), Some(button)) => saved_opener = Some(button),
+                        (Some(action), Some(button)) => s.bind(action, button),
+                        _ => s.extra.push((other.to_owned(), value.to_owned())),
                     }
+                }
+            }
+        }
+        // An opener on a button it can't be with this stick reads as never saved.
+        let refused_opener = match saved_opener {
+            Some(Some(b)) if opener_refused(s.radial_stick, b) => true,
+            Some(button) => {
+                s.bind(RADIAL, button);
+                false
+            }
+            None => false,
+        };
+        if let Some(pages) = crate::radial::Pages::parse(
+            text.lines()
+                .filter_map(|line| line.split_once(':'))
+                .map(|(key, value)| (key.trim(), value.trim())),
+        ) {
+            s.radial = pages;
+        }
+        let lines = || text.lines().map(str::trim);
+        let saved = |action: &str| {
+            let prefix = format!("bind_{action}:");
+            lines().any(|line| line.starts_with(&prefix))
+        };
+        // The layout the file was written in; none in a file from before these defaults.
+        let layout = lines()
+            .find_map(|line| line.strip_prefix("bindLayout:"))
+            .map(|value| value.trim().parse::<u32>().unwrap_or(0));
+        s.bind_layout = layout.map_or(BIND_LAYOUT, |layout| layout.max(BIND_LAYOUT));
+        // Once, for a file from before the radial menu's opener, or one with the opener on a
+        // button it can no longer be: a button the player bound by hand stays theirs, and the
+        // opener's default doesn't take it. From then on the file says where the opener is, and
+        // a conflict made since stays shown in the binds list.
+        let before_opener = layout.is_none_or(|layout| layout < OPENER_LAYOUT);
+        if !text.is_empty() && (refused_opener || (before_opener && !saved(RADIAL))) {
+            let default_opener = ACTIONS
+                .iter()
+                .find(|(action, _)| *action == RADIAL)
+                .and_then(|(_, button)| *button);
+            let taken = s.bindings.iter().any(|(action, button)| {
+                *action != RADIAL && button.is_some() && *button == default_opener
+            });
+            if taken {
+                s.bindings.insert(RADIAL, None);
+            }
+        }
+        // The default too can be under the selecting thumb (D-pad Right, the left stick
+        // selecting): no button opens the menu until the player picks one.
+        if s.binding(RADIAL)
+            .is_some_and(|b| opener_refused(s.radial_stick, b))
+        {
+            s.bindings.insert(RADIAL, None);
+        }
+        // A file from before these defaults: its player's buttons stay where they were, and
+        // nothing they saved shares a button with the radial menu's opener. They can bind one
+        // in the binds list.
+        if !text.is_empty() && layout.is_none() {
+            s.bindings.entry(RADIAL).or_insert(None);
+            for (action, button) in [
+                ("key.drop", Button::East),
+                ("key.togglePerspective", Button::DPadUp),
+                ("key.chat", Button::DPadRight),
+                ("key.playerlist", Button::Select),
+                ("key.advancements", Button::DPadDown),
+            ] {
+                // A button saved by hand stays, even one that's now this action's default.
+                if !saved(action) {
+                    s.bindings.entry(action).or_insert(Some(button));
                 }
             }
         }
@@ -612,7 +910,9 @@ impl PadSettings {
             self.keyboard.name(),
         );
         text.push_str(&format!(
-            "pointerSpeed:{}\nscrollSpeed:{}\nrepeatDelay:{}\nrepeatInterval:{}\n",
+            "craftOnServers:{}\ngameplayGuide:{}\npointerSpeed:{}\nscrollSpeed:{}\nrepeatDelay:{}\nrepeatInterval:{}\n",
+            bool_text(self.craft_on_servers),
+            self.guide_detail.name(),
             self.pointer_speed, self.scroll_speed, self.repeat_delay, self.repeat_interval,
         ));
         for (action, button) in &self.bindings {
@@ -620,6 +920,29 @@ impl PadSettings {
                 "bind_{action}:{}\n",
                 button.map_or("none", Button::name)
             ));
+        }
+        text.push_str(&format!(
+            "playInBackground:{}\n",
+            bool_text(self.play_in_background)
+        ));
+        text.push_str(&format!(
+            "radialMode:{}\nradialStick:{}\n",
+            self.radial_mode.name(),
+            self.radial_stick.name()
+        ));
+        text.push_str(&format!("bindLayout:{}\n", self.bind_layout));
+        for (key, value) in &self.extra {
+            // A button this game didn't know, for an action the player has bound here since.
+            let rebound = key
+                .strip_prefix("bind_")
+                .is_some_and(|action| self.bindings.contains_key(action));
+            if !rebound {
+                text.push_str(&format!("{key}:{value}\n"));
+            }
+        }
+        // The default pages aren't written: they can improve for a player who never changed them.
+        if self.radial != crate::radial::Pages::default() {
+            text.push_str(&self.radial.serialize());
         }
         text
     }
@@ -633,11 +956,15 @@ impl PadSettings {
             None => Self::default_of(action),
         }
     }
-    /// Bind an action (`None` unbinds); unknown actions are ignored.
+    /// Put `action` on `button`, or unbind it. An unknown action, or a button it can't take
+    /// (`can_bind`), changes nothing.
     pub fn bind(&mut self, action: &str, button: Option<Button>) {
         let Some((name, default)) = ACTIONS.iter().find(|a| a.0 == action) else {
             return;
         };
+        if button.is_some_and(|b| !self.can_bind(action, b)) {
+            return;
+        }
         if button == *default {
             self.bindings.remove(name);
         } else {
@@ -691,10 +1018,34 @@ pub fn stick_axes(
     {
         // Default map: RightStickX is the stick's Y, LeftZ its X; RightStickY
         // is the right trigger and must not drive look.
-        (left, [left_z, right[0]])
+        // gilrs turns over only the axes it calls Y, and this Y is on one it doesn't.
+        (left, [left_z, -right[0]])
     } else {
         (left, right)
     }
+}
+
+/// The tilt from which a stick holds a key in [`eight_direction_keys`]: holding one is full speed,
+/// so the small tilts past the deadzone stay still.
+const KEY_TILT: f32 = 0.3;
+/// tan(22.5 degrees): where one of the 8 sectors meets the next.
+const SECTOR_EDGE: f32 = 0.414_213_57;
+
+/// The movement keys (forward, backward, left, right) a move vector (`[left, forward]`) holds: the
+/// one of the 8 headings it is nearest, so it is at most 22.5 degrees off. An edge goes to the
+/// straight heading.
+pub fn eight_direction_keys([left, forward]: [f32; 2]) -> [bool; 4] {
+    if length([left, forward]) < KEY_TILT {
+        return [false; 4];
+    }
+    let along = forward.abs() > SECTOR_EDGE * left.abs();
+    let across = left.abs() > SECTOR_EDGE * forward.abs();
+    [
+        along && forward > 0.0,
+        along && forward < 0.0,
+        across && left > 0.0,
+        across && left < 0.0,
+    ]
 }
 
 /// A radial deadzone: inside it the stick is centred; beyond it the rest of
@@ -743,15 +1094,6 @@ pub fn look_delta(
         x * YAW_SPEED * speed * seconds,
         -y * PITCH_SPEED * speed * seconds,
     )
-}
-
-/// The hotbar slot after a bumper: one step with wrap-around.
-pub fn hotbar_step(selected: usize, forward: bool) -> usize {
-    if forward {
-        (selected + 1) % 9
-    } else {
-        (selected + 8) % 9
-    }
 }
 
 /// Menu cursor speed in GUI pixels per second at full tilt.
@@ -1223,6 +1565,24 @@ pub enum Rumble {
         radius: f32,
     },
     Totem,
+    /// The radial menu's stick reached a slot that would run: a tick.
+    RadialSlot,
+    /// The radial menu's page turned: a shorter tick.
+    RadialPage,
+    /// The page turn went round an end: a second tick after the first.
+    RadialWrap,
+    /// A release ran nothing after something had been selected: a soft buzz.
+    RadialNothing,
+}
+impl From<crate::input_source::Feedback> for Rumble {
+    fn from(event: crate::input_source::Feedback) -> Self {
+        use crate::input_source::Feedback;
+        match event {
+            Feedback::BlockBroken => Rumble::BlockBroken,
+            Feedback::Explosion { distance, radius } => Rumble::Explosion { distance, radius },
+            Feedback::Totem => Rumble::Totem,
+        }
+    }
 }
 /// A vibration: the heavy (low-frequency) and light motors, 0..1, and how
 /// long it lasts.
@@ -1232,6 +1592,7 @@ pub struct Pulse {
     pub weak: f32,
     pub millis: u32,
 }
+use crate::radial::{RADIAL_NOTHING, RADIAL_PAGE_TICK, RADIAL_TICK};
 impl Rumble {
     pub fn name(self) -> &'static str {
         match self {
@@ -1239,6 +1600,10 @@ impl Rumble {
             Rumble::BlockBroken => "block",
             Rumble::Explosion { .. } => "explosion",
             Rumble::Totem => "totem",
+            Rumble::RadialSlot => "radial",
+            Rumble::RadialPage => "radial_page",
+            Rumble::RadialWrap => "radial_wrap",
+            Rumble::RadialNothing => "radial_nothing",
         }
     }
     /// The pulse, or `None` when it is too faint to feel.
@@ -1265,6 +1630,9 @@ impl Rumble {
                     millis: 350,
                 })
             }
+            Rumble::RadialSlot => Some(RADIAL_TICK),
+            Rumble::RadialPage | Rumble::RadialWrap => Some(RADIAL_PAGE_TICK),
+            Rumble::RadialNothing => Some(RADIAL_NOTHING),
             Rumble::Totem => Some(Pulse {
                 strong: 0.7,
                 weak: 0.7,
@@ -1286,6 +1654,10 @@ impl Rumble {
         };
         match self {
             Rumble::BlockBroken => vec![Pulse { millis: 35, ..p }],
+            Rumble::RadialSlot
+            | Rumble::RadialPage
+            | Rumble::RadialWrap
+            | Rumble::RadialNothing => vec![p],
             Rumble::Hurt(_) => {
                 let tail = p.millis.saturating_sub(50) / 2;
                 vec![step(1.0, 50), step(0.55, tail), step(0.25, tail)]
@@ -1306,9 +1678,8 @@ impl Rumble {
     }
 }
 
-/// What a trigger feels like on a DualSense, from what its action is doing (docs/controllers.md
-/// "Adaptive triggers" for the choices). Only the pad's official modes: Nielk1's notes warn the
-/// others may leave the firmware.
+/// What a trigger feels like, from what its action is doing (docs/controllers.md "Adaptive
+/// triggers"); the controller code turns it into a DualSense trigger effect.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TriggerFeel {
     Free,
@@ -1326,66 +1697,6 @@ pub enum TriggerFeel {
     Locked,
     /// Mining a block of this hardness: a buzz, stronger and slower on harder blocks.
     Texture(f32),
-}
-#[cfg(feature = "controllers")]
-impl TriggerFeel {
-    /// The effect, for a trigger that presses its action at `threshold` (0..1) of its travel.
-    pub fn effect(self, threshold: f32) -> horizon_dualsense::TriggerEffect {
-        use horizon_dualsense::trigger;
-        // The zone (of ten along the travel) where the action presses: a catch gives way there,
-        // so the click and the shot coincide.
-        let press = ((threshold.clamp(0.0, 1.0) * 10.0) as u8).clamp(3, 8);
-        match self {
-            TriggerFeel::Free => horizon_dualsense::TRIGGER_OFF,
-            // From the third zone, so the press itself stays light; at most 6 of 8, as the
-            // draw is held.
-            TriggerFeel::Draw(charge) => {
-                trigger::feedback(2, 1 + (5.0 * charge.clamp(0.0, 1.0)).round() as u8)
-            }
-            TriggerFeel::Click => trigger::weapon((press - 2).max(2), press, 8),
-            TriggerFeel::Boost => trigger::weapon((press - 2).max(2), press, 5),
-            TriggerFeel::Brace => trigger::feedback(2, 3),
-            TriggerFeel::Locked => trigger::feedback(1, 8),
-            TriggerFeel::Texture(hardness) if hardness > 0.0 => {
-                // Dirt 2, stone 3, deepslate 4, obsidian 5 of 8.
-                let amplitude = (1.0 + 1.6 * hardness.sqrt()).round().clamp(1.0, 5.0);
-                // Sand and dirt a fine 40 Hz grit; stone 30; wood, deepslate and ores 20;
-                // obsidian a 10 Hz chisel.
-                let hertz = match hardness {
-                    h if h < 1.0 => 40,
-                    h if h < 2.0 => 30,
-                    h if h < 5.0 => 20,
-                    _ => 10,
-                };
-                trigger::vibration(1, amplitude as u8, hertz)
-            }
-            TriggerFeel::Texture(_) => horizon_dualsense::TRIGGER_OFF,
-        }
-    }
-}
-#[cfg(feature = "controllers")]
-impl PadSettings {
-    /// The left and right triggers' effects: each feels the action bound to it, `key.use` or
-    /// `key.attack`.
-    pub fn trigger_effects(
-        &self,
-        using: TriggerFeel,
-        attacking: TriggerFeel,
-    ) -> [horizon_dualsense::TriggerEffect; 2] {
-        [Button::LeftTrigger, Button::RightTrigger].map(|trigger| {
-            let actions = self.actions_of(trigger);
-            let feel = if !self.adaptive_triggers {
-                TriggerFeel::Free
-            } else if actions.contains(&"key.use") {
-                using
-            } else if actions.contains(&"key.attack") {
-                attacking
-            } else {
-                TriggerFeel::Free
-            };
-            feel.effect(self.trigger_threshold)
-        })
-    }
 }
 /// What a DualSense's lightbar shows (`lightbar:`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1458,6 +1769,52 @@ mod tests {
         for (action, _) in ACTIONS {
             assert!(route(action).is_some(), "{action} has nowhere to go");
         }
+    }
+
+    #[test]
+    fn a_held_drop_repeats_then_throws_the_stack() {
+        let t = Instant::now();
+        let at = |ms: u64| t + Duration::from_millis(ms);
+        let (delay, interval) = (Duration::from_millis(350), Duration::from_millis(90));
+        let mut held = HeldDrop::new(t, delay);
+        assert_eq!(held.due(at(100), interval), None, "a tap is one item");
+        assert_eq!(held.due(at(349), interval), None);
+        assert_eq!(held.due(at(350), interval), Some(DropStep::One));
+        assert_eq!(held.due(at(400), interval), None, "not before the interval");
+        assert_eq!(held.due(at(440), interval), Some(DropStep::One));
+        assert_eq!(held.due(at(999), interval), Some(DropStep::One));
+        assert_eq!(held.due(at(1000), interval), None);
+        assert_eq!(held.due(at(1100), interval), Some(DropStep::Stack));
+        assert_eq!(held.due(at(1200), interval), Some(DropStep::Stack));
+        assert_eq!(held.due(at(1201), interval), None);
+    }
+
+    #[test]
+    fn the_later_actions_have_no_default_button_and_leave_saved_bindings() {
+        let defaults = PadSettings::default();
+        for action in [
+            "key.fullscreen",
+            "key.socialInteractions",
+            "key.quickActions",
+            "key.saveToolbarActivator",
+            "key.loadToolbarActivator",
+            "key.hotbar.1",
+            "key.hotbar.9",
+        ] {
+            assert_eq!(defaults.binding(action), None, "{action}");
+        }
+        let read = PadSettings::parse(
+            "bindLayout:1
+bind_key.jump:east
+bind_key.hotbar.2:north
+",
+        );
+        assert_eq!(read.binding("key.jump"), Some(Button::East));
+        assert_eq!(read.binding("key.inventory"), Some(Button::North));
+        assert_eq!(
+            read.actions_of(Button::North),
+            ["key.inventory", "key.hotbar.2"]
+        );
     }
 
     #[test]
@@ -1579,7 +1936,7 @@ mod tests {
     }
 
     #[test]
-    fn defaults_follow_bedrock() {
+    fn every_action_has_its_default() {
         let s = PadSettings::default();
         assert_eq!(s.actions_of(Button::South), ["key.jump"]);
         assert_eq!(s.actions_of(Button::RightTrigger), ["key.attack"]);
@@ -1587,14 +1944,53 @@ mod tests {
         assert_eq!(s.actions_of(Button::North), ["key.inventory"]);
         assert_eq!(s.actions_of(Button::RightBumper), [HOTBAR_NEXT]);
         assert!(s.actions_of(Button::Start).is_empty());
-        // Every default action names a vanilla mapping or a pad action.
+        // Every default action names a key mapping or a pad action.
         for (action, _) in ACTIONS {
             assert!(
                 action.starts_with("pad.")
-                    || crate::keybinds::MAPPINGS.iter().any(|m| m.0 == *action),
+                    || crate::keybinds::all_mappings().any(|m| m.0 == *action),
                 "{action}"
             );
         }
+    }
+
+    #[test]
+    fn playing_in_the_background_is_off_until_saved_on() {
+        assert!(!PadSettings::parse("vibration:false\n").play_in_background);
+        let mut on = PadSettings::default();
+        assert!(!on.play_in_background);
+        on.play_in_background = true;
+        assert!(PadSettings::parse(&on.serialize()).play_in_background);
+    }
+
+    #[test]
+    fn a_file_from_before_these_defaults_keeps_its_buttons() {
+        // Saved settings that never bound D-pad down: it stays on the advancements.
+        let s = PadSettings::parse("vibration:false\nbind_key.chat:up\n");
+        assert_eq!(s.binding("key.advancements"), Some(Button::DPadDown));
+        assert_eq!(s.binding("key.chat"), Some(Button::DPadUp));
+        assert_eq!(s.binding("key.drop"), Some(Button::East));
+        assert_eq!(s.binding("key.togglePerspective"), Some(Button::DPadUp));
+        assert_eq!(s.binding("key.playerlist"), Some(Button::Select));
+        assert!(!s.conflicts("key.advancements"));
+        // Advancements moved by hand stays moved, and the file stays this way from then on.
+        let s = PadSettings::parse("bind_key.advancements:left\nbind_key.drop:down\n");
+        assert_eq!(s.binding("key.advancements"), Some(Button::DPadLeft));
+        assert_eq!(s.binding("key.drop"), Some(Button::DPadDown));
+        assert_eq!(PadSettings::parse(&s.serialize()), s);
+    }
+
+    #[test]
+    fn a_new_player_drops_on_d_pad_down_and_chats_on_d_pad_up() {
+        for s in [PadSettings::default(), PadSettings::parse("")] {
+            assert_eq!(s.binding("key.drop"), Some(Button::DPadDown));
+            assert_eq!(s.binding("key.chat"), Some(Button::DPadUp));
+            assert_eq!(s.binding("key.togglePerspective"), Some(Button::Select));
+            assert_eq!(s.binding("key.playerlist"), None);
+            assert_eq!(s.binding("key.advancements"), None);
+        }
+        let s = PadSettings::parse(&PadSettings::default().serialize());
+        assert_eq!(s, PadSettings::default());
     }
 
     #[test]
@@ -1608,6 +2004,7 @@ mod tests {
         s.look_sensitivity = 0.75;
         s.glyphs = GlyphStyle::PlayStation;
         s.nintendo_letters = !s.nintendo_letters;
+        s.guide_detail = GuideDetail::Basic;
         let text = s.serialize();
         assert!(text.contains(&format!("nintendoLetters:{}\n", s.nintendo_letters)));
         assert!(text.contains("bind_key.jump:east\n"));
@@ -1618,9 +2015,58 @@ mod tests {
         assert_eq!(back.binding("key.drop"), None);
         assert_eq!(back.actions_of(Button::East), ["key.jump"]);
         // Garbage keeps the defaults.
-        let odd =
-            PadSettings::parse("lookSensitivity:NaN\nbind_key.nope:south\nbind_key.jump:x9\n");
-        assert_eq!(odd, PadSettings::default());
+        let odd = PadSettings::parse(
+            "lookSensitivity:NaN\nbind_key.nope:south\nbind_key.jump:x9\nbindLayout:1\n",
+        );
+        assert_eq!(
+            odd.look_sensitivity,
+            PadSettings::default().look_sensitivity
+        );
+        assert_eq!(odd.binding("key.jump"), Some(Button::South));
+        assert_eq!(odd.actions_of(Button::South), ["key.jump"]);
+    }
+
+    #[test]
+    fn lines_this_game_doesnt_read_survive_a_save() {
+        // A newer Horizon's setting, an action this game doesn't have, a button it doesn't know.
+        let text =
+            "bindLayout:2\nhapticStrength:0.4\nbind_horizon:dash:south\nbind_key.jump:paddle1\n";
+        let s = PadSettings::parse(text);
+        assert_eq!(
+            s.binding("key.jump"),
+            Some(Button::South),
+            "the default meanwhile"
+        );
+        let saved = s.serialize();
+        for line in [
+            "hapticStrength:0.4\n",
+            "bind_horizon:dash:south\n",
+            "bind_key.jump:paddle1\n",
+        ] {
+            assert!(saved.contains(line), "{line} lost from\n{saved}");
+        }
+        assert_eq!(PadSettings::parse(&saved), s);
+        // Bound here since, the action's own line is the one written.
+        let mut s = s;
+        s.bind("key.jump", Some(Button::West));
+        let saved = s.serialize();
+        assert!(!saved.contains("paddle1"), "{saved}");
+        assert_eq!(
+            PadSettings::parse(&saved).binding("key.jump"),
+            Some(Button::West)
+        );
+    }
+
+    #[test]
+    fn a_newer_bind_layout_is_kept() {
+        let newer = BIND_LAYOUT + 1;
+        let s = PadSettings::parse(&format!("bindLayout:{newer}\nvibration:false\n"));
+        assert!(s.serialize().contains(&format!("bindLayout:{newer}\n")));
+        let s = PadSettings::parse("bindLayout:1\nvibration:false\n");
+        assert!(
+            s.serialize()
+                .contains(&format!("bindLayout:{BIND_LAYOUT}\n"))
+        );
     }
 
     #[test]
@@ -1634,7 +2080,11 @@ mod tests {
             false,
         );
         assert_eq!(left, [0.2, 0.3]);
-        assert_eq!(right, [-0.5, 0.7], "X from LeftZ, Y from RightStickX");
+        assert_eq!(
+            right,
+            [-0.5, -0.7],
+            "X from LeftZ, Y from RightStickX, turned over"
+        );
         let kept = stick_axes(
             [0.2, 0.3],
             [0.7, -0.9],
@@ -1669,11 +2119,63 @@ mod tests {
         assert!(parts.held(Button::LeftBumper));
         assert_eq!(parts.left, [0.5, -0.25]);
         assert_eq!(parts.by_letter(), pad);
-        // A part's glyph is the letter of the button playing it.
-        assert_eq!(Button::South.by_letter().label(GlyphStyle::Nintendo), "A");
-        assert_eq!(Button::East.by_letter().label(GlyphStyle::Nintendo), "B");
-        assert_eq!(Button::West.by_letter().label(GlyphStyle::Nintendo), "X");
-        assert_eq!(Button::North.by_letter().label(GlyphStyle::Nintendo), "Y");
+    }
+
+    #[test]
+    fn a_stick_holds_the_keys_of_its_nearest_heading() {
+        // Forward, backward, left, right, by the heading counted from forward toward left.
+        let headings = [
+            [true, false, false, false],
+            [true, false, true, false],
+            [false, false, true, false],
+            [false, true, true, false],
+            [false, true, false, false],
+            [false, true, false, true],
+            [false, false, false, true],
+            [true, false, false, true],
+        ];
+        for tenth in 0..3600 {
+            let degrees = tenth as f32 / 10.0;
+            if degrees % 45.0 == 22.5 {
+                continue;
+            }
+            for tilt in [0.31, 0.5, 1.0] {
+                let (s, c) = degrees.to_radians().sin_cos();
+                let keys = eight_direction_keys([tilt * s, tilt * c]);
+                let sector = ((degrees / 45.0).round() as usize) % 8;
+                assert_eq!(keys, headings[sector], "{degrees} at {tilt}");
+                let [left, forward] =
+                    crate::input::keyboard_direction(keys[0], keys[1], keys[2], keys[3]);
+                let off = (left.atan2(forward).to_degrees() - degrees).rem_euclid(360.0);
+                assert!(off.min(360.0 - off) <= 22.5 + 1e-3, "{degrees}: {off}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_sector_edge_goes_to_the_straight_heading() {
+        assert_eq!(
+            eight_direction_keys([0.414_213_57, 1.0]),
+            [true, false, false, false]
+        );
+        assert_eq!(
+            eight_direction_keys([0.4143, 1.0]),
+            [true, false, true, false]
+        );
+        assert_eq!(
+            eight_direction_keys([1.0, 0.414_213_57]),
+            [false, false, true, false]
+        );
+    }
+
+    #[test]
+    fn a_small_tilt_holds_no_key() {
+        assert_eq!(eight_direction_keys([0.0, 0.0]), [false; 4]);
+        assert_eq!(eight_direction_keys([0.2, 0.2]), [false; 4]);
+        assert_eq!(
+            eight_direction_keys([0.0, 0.31]),
+            [true, false, false, false]
+        );
     }
 
     #[test]
@@ -2044,12 +2546,7 @@ mod tests {
     }
 
     #[test]
-    fn labels_and_conflicts() {
-        assert_eq!(Button::South.label(GlyphStyle::Xbox), "A");
-        assert_eq!(Button::South.label(GlyphStyle::PlayStation), "×");
-        assert_eq!(Button::South.label(GlyphStyle::Nintendo), "B");
-        assert_eq!(Button::RightTrigger.label(GlyphStyle::PlayStation), "R2");
-        assert_eq!(Button::DPadLeft.label(GlyphStyle::Xbox), "←");
+    fn styles_resolve_and_conflicts() {
         assert_eq!(
             GlyphStyle::Auto.resolve(GlyphStyle::PlayStation),
             GlyphStyle::PlayStation
@@ -2081,52 +2578,6 @@ mod tests {
         assert_eq!(w.observe(None), None);
         assert_eq!(w.observe(Some(2.0)), None);
         assert_eq!(w.observe(Some(1.0)), Some(1.0));
-    }
-
-    #[cfg(feature = "controllers")]
-    #[test]
-    fn triggers_feel_their_action() {
-        use horizon_dualsense::{TRIGGER_OFF, trigger};
-        let mut s = PadSettings::default();
-        // Use is LT, attack RT by default.
-        let [left, right] = s.trigger_effects(TriggerFeel::Draw(1.0), TriggerFeel::Texture(1.5));
-        assert_eq!(left, trigger::feedback(2, 6));
-        assert_eq!(right, trigger::vibration(1, 3, 30));
-        assert_eq!(
-            s.trigger_effects(TriggerFeel::Draw(0.0), TriggerFeel::Free),
-            [trigger::feedback(2, 1), TRIGGER_OFF]
-        );
-        // The catch gives way in the zone where the default threshold (0.4) presses: weapon
-        // 0x25, zones 2 and 4, strength 8 (stored 7) or 5 (stored 4).
-        let catch = |strength| [0x25, 0x14, 0x00, strength, 0, 0, 0, 0, 0, 0, 0];
-        assert_eq!(TriggerFeel::Click.effect(0.4), catch(7));
-        assert_eq!(TriggerFeel::Boost.effect(0.4), catch(4));
-        // A deeper threshold moves it: zones 5 and 7.
-        assert_eq!(TriggerFeel::Click.effect(0.7)[1..3], [0xa0, 0x00]);
-        assert_eq!(TriggerFeel::Click.effect(0.1), trigger::weapon(2, 3, 8));
-        assert_eq!(TriggerFeel::Brace.effect(0.4), trigger::feedback(2, 3));
-        assert_eq!(TriggerFeel::Locked.effect(0.4), trigger::feedback(1, 8));
-        // Harder blocks buzz harder and slower; instant-break blocks don't.
-        assert_eq!(
-            TriggerFeel::Texture(0.5).effect(0.4),
-            trigger::vibration(1, 2, 40)
-        );
-        assert_eq!(
-            TriggerFeel::Texture(3.0).effect(0.4),
-            trigger::vibration(1, 4, 20)
-        );
-        assert_eq!(
-            TriggerFeel::Texture(50.0).effect(0.4),
-            trigger::vibration(1, 5, 10)
-        );
-        assert_eq!(TriggerFeel::Texture(0.0).effect(0.4), TRIGGER_OFF);
-        assert_eq!(TriggerFeel::Texture(-1.0).effect(0.4), TRIGGER_OFF);
-        s.adaptive_triggers = false;
-        assert_eq!(
-            s.trigger_effects(TriggerFeel::Click, TriggerFeel::Boost),
-            [TRIGGER_OFF; 2]
-        );
-        assert!(!PadSettings::parse(&s.serialize()).adaptive_triggers);
     }
 
     #[test]
@@ -2206,12 +2657,27 @@ mod tests {
     }
 
     #[test]
-    fn hotbar_wraps_and_glyphs_follow_the_vendor() {
-        assert_eq!(hotbar_step(8, true), 0);
-        assert_eq!(hotbar_step(0, false), 8);
-        assert_eq!(hotbar_step(3, true), 4);
-        assert_eq!(GlyphStyle::of_vendor(Some(0x054c)), GlyphStyle::PlayStation);
-        assert_eq!(GlyphStyle::of_vendor(Some(0x28de)), GlyphStyle::Xbox);
-        assert_eq!(GlyphStyle::of_vendor(None), GlyphStyle::Xbox);
+    fn glyphs_follow_the_vendor() {
+        let of = |vendor, product| GlyphStyle::of_device(Some(vendor), Some(product));
+        // Any product of the consoles' makers.
+        assert_eq!(of(0x054c, 0x0ce6), GlyphStyle::PlayStation);
+        assert_eq!(of(0x054c, 0x0001), GlyphStyle::PlayStation);
+        assert_eq!(of(0x057e, 0x2009), GlyphStyle::Nintendo);
+        // A pad made for a console by another maker, and that maker's others.
+        assert_eq!(of(0x0f0d, 0x0066), GlyphStyle::PlayStation);
+        assert_eq!(of(0x0f0d, 0x00c1), GlyphStyle::Nintendo);
+        assert_eq!(of(0x0f0d, 0x0067), GlyphStyle::Xbox);
+        assert_eq!(of(0x20d6, 0xa711), GlyphStyle::Nintendo);
+        // Valve's virtual pad, Microsoft's, nothing known, nothing reported.
+        assert_eq!(of(0x28de, 0x11ff), GlyphStyle::Xbox);
+        assert_eq!(of(0x045e, 0x0b12), GlyphStyle::Xbox);
+        assert_eq!(of(0x1234, 0x5678), GlyphStyle::Xbox);
+        assert_eq!(GlyphStyle::of_device(None, None), GlyphStyle::Xbox);
+        // A vendor alone is enough only for the consoles' makers.
+        assert_eq!(
+            GlyphStyle::of_device(Some(0x054c), None),
+            GlyphStyle::PlayStation
+        );
+        assert_eq!(GlyphStyle::of_device(Some(0x0f0d), None), GlyphStyle::Xbox);
     }
 }

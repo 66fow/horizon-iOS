@@ -105,12 +105,19 @@ impl Installed {
     }
 
     pub fn save(&self, home: &Path) -> Result<(), String> {
+        let _lock = super::lock_home(home);
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let id = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let path = home.join(MANIFEST);
-        let part = home.join(format!(".{MANIFEST}.part"));
+        let part = home.join(format!(".{MANIFEST}.{}-{id}.part", std::process::id()));
         let text = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
         fs::create_dir_all(home).map_err(|e| format!("{}: {e}", home.display()))?;
-        fs::write(&part, text).map_err(|e| format!("{}: {e}", part.display()))?;
-        fs::rename(&part, &path).map_err(|e| format!("{}: {e}", path.display()))
+        let res = fs::write(&part, text).and_then(|()| fs::rename(&part, &path));
+        if let Err(e) = res {
+            let _ = fs::remove_file(&part);
+            return Err(format!("{}: {e}", path.display()));
+        }
+        Ok(())
     }
 
     pub fn find(&self, source: SourceId, project: &str) -> Option<&Entry> {
@@ -209,6 +216,7 @@ pub fn install(
     home: &Path,
     progress: &dyn Fn(&str, f32),
 ) -> Result<Vec<Entry>, String> {
+    let _lock = super::lock_home(home);
     if project.source == SourceId::Horizon {
         return super::horizon::install(project, home, progress);
     }
@@ -234,6 +242,7 @@ pub(super) fn put(
     folder: &dyn Fn(Kind) -> &'static str,
     progress: &dyn Fn(&str, f32),
 ) -> Result<Vec<Entry>, String> {
+    let _lock = super::lock_home(home);
     let mut installed = Installed::load(home);
     let mut done = Vec::new();
     for step in steps {
@@ -303,6 +312,7 @@ pub(super) fn put(
 
 /// Removes what the browser installed for `name` (a project id or slug): its file and its entry.
 pub fn remove(home: &Path, name: &str) -> Result<Entry, String> {
+    let _lock = super::lock_home(home);
     let mut installed = Installed::load(home);
     let entry = installed
         .lookup(name)
@@ -319,7 +329,7 @@ pub fn remove(home: &Path, name: &str) -> Result<Entry, String> {
     }
     if let Some(id) = super::horizon::mod_id(&entry).filter(|_| entry.source == SourceId::Horizon) {
         // The `.hmod` a mod that turned native left behind (horizon::install_version).
-        if entry.file.ends_with(".hnmod") {
+        if super::super::native_status::is_native_file(&entry.file) {
             let _ = fs::remove_file(home.join(super::java::MODS_DIR).join(format!("{id}.hmod")));
         }
         super::java::set_enabled(home, id, false)?;
@@ -331,8 +341,18 @@ pub fn remove(home: &Path, name: &str) -> Result<Entry, String> {
     Ok(entry)
 }
 
-/// The newer version `entry` can be updated to, if any.
-pub fn update_for(source: &dyn Source, entry: &Entry) -> Result<Option<Version>, String> {
+/// The newer version `entry`, installed in game folder `home`, can be updated to, if any. A
+/// registry native mod's is the newest that builds on the Horizon `home` plays.
+pub fn update_for(
+    source: &dyn Source,
+    entry: &Entry,
+    home: &Path,
+) -> Result<Option<Version>, String> {
+    if entry.source == SourceId::Horizon {
+        if let Some(update) = super::horizon::fitting_update(&entry.project, &entry.version, home) {
+            return Ok(update);
+        }
+    }
     let project = source.project(&entry.project)?;
     let versions = source.versions(&project)?;
     Ok(pick(project.kind, &versions, true)
@@ -410,11 +430,9 @@ pub fn install_datapack(
     let result = fetched.and_then(|(zip, number)| {
         let coverage = crate::datapacks::coverage(&zip)?;
         if coverage.read.is_empty() {
-            return Err(format!(
-                "{} would change nothing in Horizon yet: it has no functions, predicates or item \
-                 modifiers, and Horizon doesn't read its {} yet.",
-                project.title,
-                coverage.not_read()
+            return Err(crate::i18n::trf(
+                "{title} would change nothing in Horizon yet: Horizon doesn't read its {files}.",
+                &[("title", &project.title), ("files", &coverage.not_read())],
             ));
         }
         let pack = crate::datapacks::add(world, &zip)?;

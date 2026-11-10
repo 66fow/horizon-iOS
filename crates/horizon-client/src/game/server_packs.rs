@@ -239,7 +239,9 @@ impl Game<'_> {
             return;
         };
         let file = multiplayer::servers_file(&saves());
-        let entry = servers::load(&file).into_iter().find(|s| s.ip == address);
+        // ServerList.get: the shown entries, then the hidden ones.
+        let (shown, hidden) = servers::load_all(&file);
+        let entry = shown.into_iter().chain(hidden).find(|s| s.ip == address);
         let setting = entry.as_ref().and_then(|e| e.accept_textures);
         state.address = entry.map(|e| e.ip);
         state.packs.connect(Prompt::for_server(setting));
@@ -297,8 +299,10 @@ impl Game<'_> {
     /// The joined server's entry in the server list: its `acceptTextures`.
     fn server_setting(&self) -> Option<bool> {
         let address = self.server_packs.address.as_deref()?;
-        servers::load(&multiplayer::servers_file(&saves()))
+        let (shown, hidden) = servers::load_all(&multiplayer::servers_file(&saves()));
+        shown
             .into_iter()
+            .chain(hidden)
             .find(|s| s.ip == address)?
             .accept_textures
     }
@@ -348,11 +352,19 @@ impl Game<'_> {
         // ServerList.saveSingleServer.
         if let Some(address) = &self.server_packs.address {
             let file = multiplayer::servers_file(&saves());
-            let mut list = servers::load(&file);
+            let (mut list, mut hidden) = servers::load_all(&file);
+            let mut found = false;
             for entry in list.iter_mut().filter(|s| &s.ip == address) {
                 entry.accept_textures = setting;
+                found = true;
             }
-            if let Err(e) = servers::save(&file, &list) {
+            // Not among the shown entries: the hidden ones (a Direct Connection's).
+            if !found {
+                for entry in hidden.iter_mut().filter(|s| &s.ip == address) {
+                    entry.accept_textures = setting;
+                }
+            }
+            if let Err(e) = servers::save_all(&file, &list, &hidden) {
                 log::warn!("Horizon: could not save {}: {e}", file.display());
             }
         }
@@ -376,6 +388,7 @@ impl Game<'_> {
         });
         notifiers.append(&mut self.server_packs.notifiers);
         self.server_packs.notifiers = notifiers;
+        self.drive_mod_browser();
         // A reload waits for the world's resources (`reload_packs`).
         if self.rest_loader.is_some() {
             return;
@@ -479,6 +492,7 @@ impl Game<'_> {
         let Some(prompt) = &self.server_packs.prompt else {
             return;
         };
+        horizon_client::widgets::cover_frame();
         let atlas = &self.gui.atlas;
         let (w, h) = (batch.width, batch.height);
         if self.player.is_none() {
@@ -498,9 +512,9 @@ impl Game<'_> {
         horizon_client::widgets::begin_screen(|| {
             super::screen_info::confirm("pack_prompt", &title.plain(), &message.plain())
         });
-        prompt
-            .layout(atlas, (w, h))
-            .draw(batch, atlas, self.cursor, [&yes, &no]);
+        let mut layout = prompt.layout(atlas, (w, h));
+        layout.declare_no();
+        layout.draw(batch, atlas, self.cursor, [&yes, &no]);
     }
     /// `IntegratedServer.reportChunkLoadFailure` and the like: what the server
     /// thread reported since the last frame, each in `SystemToast.addOrUpdate`

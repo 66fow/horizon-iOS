@@ -96,23 +96,20 @@ impl NoResources {
         let lines: Vec<Vec<String>> = self
             .paragraphs
             .iter()
-            .map(|p| wrap(ui, Face::Regular, BODY, p, width))
+            .map(|p| wrap(ui, Face::Regular, body(), p, width))
             .collect();
         let text_h = lines.iter().map(|l| l.len() as f32 * LINE).sum::<f32>()
-            + lines.len().saturating_sub(1) as f32 * PARAGRAPH_GAP;
-        let small_lines: usize = self
-            .small
-            .iter()
-            .map(|s| wrap(ui, Face::Regular, ui_theme::SMALL, s, width).len())
-            .sum();
-        let height =
-            TITLE_LINE + 16.0 + text_h + 28.0 + CONTROL + 20.0 + small_lines as f32 * SMALL_LINE;
+            + (lines.len() - 1) as f32 * PARAGRAPH_GAP;
+        let height = TITLE_LINE + 16.0 + text_h + 28.0 + control() + 20.0 + SMALL_LINE;
         let y = ((ui.h - height) / 2.0).max(24.0).round();
         let buttons_y = y + TITLE_LINE + 16.0 + text_h + 28.0;
         let mut buttons = Vec::new();
         let mut bx = x;
-        for (label, action) in &self.buttons {
-            let w = (ui.measure(Face::Medium, BUTTON_TEXT, label) + 40.0).round();
+        for (label, action) in [
+            ("Download the launcher", Action::Download),
+            ("Quit", Action::Quit),
+        ] {
+            let w = (ui.measure(Face::Medium, button_text(), label) + 40.0).round();
             buttons.push(Button {
                 label: label.clone(),
                 action: *action,
@@ -133,41 +130,50 @@ impl NoResources {
 
     pub fn draw(&self, ui: &mut Ui) {
         let layout = self.layout(ui);
-        ui.rounded(0.0, 0.0, ui.w, ui.h, 0.0, color::BG);
+        ui.rounded(0.0, 0.0, ui.w, ui.h, 0.0, color::bg());
         let mut y = layout.y;
         ui.text_line(
             Face::Medium,
-            TITLE_SIZE,
+            title_size(),
             TITLE_LINE,
             layout.x,
             y,
-            color::TEXT,
-            &self.title,
+            color::text(),
+            TITLE,
         );
         y += TITLE_LINE + 16.0;
         for paragraph in &layout.lines {
             for line in paragraph {
-                ui.text_line(Face::Regular, BODY, LINE, layout.x, y, color::TEXT, line);
+                ui.text_line(
+                    Face::Regular,
+                    body(),
+                    LINE,
+                    layout.x,
+                    y,
+                    color::text(),
+                    line,
+                );
                 y += LINE;
             }
             y += PARAGRAPH_GAP;
         }
         for button in &layout.buttons {
             let hovered = button.contains(ui.cursor);
-            let main = button.action != Action::Quit;
-            let (plate, ink) = match (main, hovered) {
-                (true, false) => (color::ACCENT, color::ON_ACCENT),
-                (true, true) => (color::with_alpha(color::ACCENT, 0.85), color::ON_ACCENT),
-                (false, false) => (color::RAISED, color::TEXT),
-                (false, true) => (color::HOVER, color::TEXT),
+            let (plate, ink) = match (button.action, hovered) {
+                (Action::Download, false) => (color::accent(), color::on_accent()),
+                (Action::Download, true) => {
+                    (color::with_alpha(color::accent(), 0.85), color::on_accent())
+                }
+                (Action::Quit, false) => (color::raised(), color::text()),
+                (Action::Quit, true) => (color::hover(), color::text()),
             };
-            let h = CONTROL;
+            let h = control();
             ui.rounded(button.x, button.y, button.w, h, h / 2.0, plate);
-            let lw = ui.measure(Face::Medium, BUTTON_TEXT, &button.label);
+            let lw = ui.measure(Face::Medium, button_text(), button.label);
             let lx = button.x + ((button.w - lw) / 2.0).round();
             ui.text_line(
                 Face::Medium,
-                BUTTON_TEXT,
+                button_text(),
                 h,
                 lx,
                 button.y,
@@ -175,21 +181,25 @@ impl NoResources {
                 &button.label,
             );
         }
-        let small_y = y + 28.0 - PARAGRAPH_GAP + CONTROL + 20.0;
-        let small: Vec<String> = self
-            .small
-            .iter()
-            .flat_map(|s| wrap(ui, Face::Regular, ui_theme::SMALL, s, layout.width))
-            .collect();
-        for (i, line) in small.iter().enumerate() {
+        let small_y = layout.buttons[0].y + control() + 20.0;
+        for (i, line) in wrap(
+            ui,
+            Face::Regular,
+            ui_theme::small(),
+            &self.looked_in,
+            layout.width,
+        )
+        .iter()
+        .enumerate()
+        {
             let line_y = small_y + i as f32 * SMALL_LINE;
             ui.text_line(
                 Face::Regular,
-                ui_theme::SMALL,
+                ui_theme::small(),
                 SMALL_LINE,
                 layout.x,
                 line_y,
-                color::MUTED,
+                color::muted(),
                 line,
             );
         }
@@ -205,14 +215,22 @@ impl NoResources {
     }
 }
 
-const TITLE_SIZE: f32 = horizon_theme::TITLE.px;
+fn title_size() -> f32 {
+    ui_theme::sizes().title
+}
 const TITLE_LINE: f32 = 40.0;
-const BODY: f32 = horizon_theme::BODY.px;
+fn body() -> f32 {
+    ui_theme::sizes().body
+}
 const LINE: f32 = 24.0;
 const PARAGRAPH_GAP: f32 = 10.0;
-const BUTTON_TEXT: f32 = horizon_theme::UI.px;
+fn button_text() -> f32 {
+    ui_theme::sizes().ui
+}
 const SMALL_LINE: f32 = 18.0;
-const CONTROL: f32 = horizon_theme::CONTROL_LARGE;
+fn control() -> f32 {
+    ui_theme::sizes().control_large
+}
 
 struct Layout {
     x: f32,
@@ -232,7 +250,7 @@ struct Button {
 
 impl Button {
     fn contains(&self, (cx, cy): (f32, f32)) -> bool {
-        cx >= self.x && cx < self.x + self.w && cy >= self.y && cy < self.y + CONTROL
+        cx >= self.x && cx < self.x + self.w && cy >= self.y && cy < self.y + control()
     }
 }
 
@@ -280,7 +298,7 @@ mod tests {
         for size in [[1280, 720], [800, 600], [2560, 1440]] {
             let (download, quit, density) = with_ui(size, (0.0, 0.0), |ui| {
                 let layout = screen.layout(ui);
-                let center = |b: &Button| (b.x + b.w / 2.0, b.y + CONTROL / 2.0);
+                let center = |b: &Button| (b.x + b.w / 2.0, b.y + control() / 2.0);
                 (
                     center(&layout.buttons[0]),
                     center(&layout.buttons[1]),
@@ -303,7 +321,7 @@ mod tests {
                 let layout = screen.layout(ui);
                 let last = layout.buttons.last().unwrap();
                 assert!(
-                    last.x + last.w <= ui.w && last.y + CONTROL <= ui.h,
+                    last.x + last.w <= ui.w && last.y + control() <= ui.h,
                     "{size:?}"
                 );
             });
@@ -314,10 +332,10 @@ mod tests {
     fn text_wraps_within_the_column_and_keeps_every_word() {
         with_ui([1280, 720], (0.0, 0.0), |ui| {
             for paragraph in PARAGRAPHS {
-                let lines = wrap(ui, Face::Regular, BODY, paragraph, 300.0);
+                let lines = wrap(ui, Face::Regular, body(), paragraph, 300.0);
                 assert!(lines.len() > 1, "{paragraph}");
                 for line in &lines {
-                    assert!(ui.measure(Face::Regular, BODY, line) <= 300.0, "{line}");
+                    assert!(ui.measure(Face::Regular, body(), line) <= 300.0, "{line}");
                 }
                 assert_eq!(lines.join(" "), paragraph);
             }
