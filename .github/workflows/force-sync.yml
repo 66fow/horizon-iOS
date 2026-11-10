@@ -28,24 +28,25 @@ jobs:
           git remote add upstream https://github.com/horizon-rust/horizon.git
           git fetch upstream
 
-      - name: Merge and Protect packaging/ios
+      - name: Merge and Protect packaging & workflows
         run: |
-          # 1. Start the merge but pause before committing (--no-commit)
-          # The '|| true' ensures the script continues even if tree conflicts occur
+          # 1. Start the merge but pause before committing
           git merge upstream/main -X theirs --allow-unrelated-histories --no-commit || true
 
           # 2. Check if a merge is actually in progress
           if [ -f .git/MERGE_HEAD ]; then
-            echo "Merge in progress. Protecting packaging/ios/ directory..."
+            echo "Merge in progress. Protecting custom directories..."
             
-            # Wipe the directory from staging and working tree to clear any upstream changes
+            # Wipe upstream changes to protected directories from staging
             git rm -rfq packaging/ios/ 2>/dev/null || true
+            git rm -rfq .github/workflows/ 2>/dev/null || true
             
-            # Restore the directory exactly as it is in our local HEAD
+            # Restore them exactly as they are in our local HEAD
             git checkout HEAD -- packaging/ios/ 2>/dev/null || true
+            git checkout HEAD -- .github/workflows/ 2>/dev/null || true
             
             # 3. Finalize the merge
-            git commit -m "chore: force sync with upstream (protected packaging/ios)"
+            git commit -m "chore: force sync with upstream (protected custom dirs)"
           else
             echo "Repository is already up to date."
           fi
