@@ -19,7 +19,6 @@ pub fn icon(button: TouchButton) -> &'static Icon {
         TouchButton::Chat => &CHAT,
         TouchButton::Perspective => &PERSPECTIVE,
         TouchButton::Pause => &PAUSE,
-        TouchButton::Edit => &EDIT,
         TouchButton::Debug => &DEBUG,
         TouchButton::Sprint => &SPRINT,
     }
@@ -202,22 +201,6 @@ const DEBUG: Icon = [
     "#.........#.",
     "#....######.",
     "............",
-    "............",
-];
-
-/// A pencil.
-const EDIT: Icon = [
-    ".........##.",
-    "........####",
-    ".......####.",
-    "......###...",
-    ".....###....",
-    "....###.....",
-    "...###......",
-    "..###.......",
-    ".###........",
-    ".##.........",
-    "###.........",
     "............",
 ];
 
