@@ -421,6 +421,7 @@ impl Game<'_> {
                     super::packs::open_folder(&dir);
                 }
                 Event::GetMods => self.open_mods(),
+                Event::EditTouchControls => self.open_touch_editor(),
                 Event::OpenModFolder => {
                     let dir = Self::game_dir().join(horizon_client::mod_list::DIR);
                     let _ = std::fs::create_dir_all(&dir);
