@@ -5,13 +5,17 @@
 //! controller: they never make the game think a pad is in use (no pad cursor
 //! or glyphs in the menus they open). Sneak goes straight to the game's
 //! Sneak option (Toggle or Hold). Dragging the view turns it like the mouse
-//! does, at the Mouse Sensitivity option. The Edit button opens the
-//! layout editor; its layout is kept in `touch-controls.txt` beside
-//! `options.txt`.
+//! does, at the Mouse Sensitivity option. Options, Controls, Custom
+//! Controls opens the layout editor (over any screen, the title's too);
+//! holding a finger down in it adds a button, copies one or binds a
+//! keyboard key to one, which the game then presses as the keyboard does
+//! (so a mod's keybind hears it). The layout is kept in
+//! `touch-controls.txt` beside `options.txt`.
 use super::*;
 use horizon_client::gamepad::{Button, PadState};
 use horizon_client_input::touch::{
-    Area, Control, EditorButton, Layout, TouchButton, TouchSettings, icons,
+    Area, Bind, Control, EditorButton, EditorMenu, Layout, Picker, PickerHit, TouchButton,
+    TouchSettings, icons,
 };
 use winit::event::{Touch, TouchPhase};
 
@@ -27,7 +31,10 @@ const INK: u32 = 0xffff_ffff;
 const INK_PRESSED: u32 = 0xff20_2020;
 const SELECTED: u32 = 0xffff_e040;
 const HIDDEN_EDGE: u32 = 0xc0ff_5050;
-const SHADE: u32 = 0x5000_0000;
+/// Over the screen the editor was opened from.
+const SHADE: u32 = 0xc000_0000;
+const MENU_FACE: u32 = 0xf020_2020;
+const MENU_OFF: u32 = 0x80ff_ffff;
 
 #[cfg_attr(not(target_os = "ios"), allow(dead_code))]
 impl Game<'_> {
@@ -105,6 +112,16 @@ impl Game<'_> {
         }
     }
 
+    /// Options, Controls, Custom Controls: opens the layout editor over the
+    /// screen it was opened from.
+    pub(super) fn open_touch_editor(&mut self) {
+        if !TOUCH_CONTROLS {
+            return;
+        }
+        self.touch_load();
+        self.pad.touch.open_editor();
+    }
+
     /// The Esc button: always top left in the safe area, on every screen, as
     /// the keyboard's Escape (a touch screen has no key for it). Playing, it
     /// opens the pause menu (where Save and Quit leaves the world); over a
@@ -116,7 +133,7 @@ impl Game<'_> {
         if !TOUCH_CONTROLS
             || self.title.is_some()
             || self.pad.mod_browser.is_some()
-            || (self.pad.touch.editing() && !self.pad_in_menu())
+            || self.pad.touch.editing()
         {
             return None;
         }
@@ -163,6 +180,22 @@ impl Game<'_> {
             return Vec::new();
         }
         let mouse = self.pad.touch_mouse.finger() == Some(touch.id);
+        // The layout editor takes every finger, over whatever screen it was
+        // opened from.
+        if !mouse
+            && self.pad.touch.editing()
+            && let Some((layout, scale)) = self.touch_layout_for(touch.phase)
+        {
+            let at = (
+                touch.location.x as f32 / scale,
+                touch.location.y as f32 / scale,
+            );
+            self.pad
+                .touch
+                .touch(&layout, touch.id, touch.phase, at, Instant::now());
+            self.last_input = Instant::now();
+            return Vec::new();
+        }
         // The Esc button, top left in a world: Escape's job.
         if !mouse
             && touch.phase == TouchPhase::Started
@@ -201,7 +234,6 @@ impl Game<'_> {
                 touch.location.y as f32 / scale,
             );
             if touch.phase == TouchPhase::Started
-                && !self.pad.touch.editing()
                 && let Some(button) = layout.button_at(at)
             {
                 log::info!(
@@ -239,6 +271,15 @@ impl Game<'_> {
                 ),
             }
         }
+        if self.pad.touch.editing() {
+            // The editor is open: no controls act, and its long press ticks.
+            self.pad.touch.editor_tick(Instant::now());
+            self.pad.touch_layout = self.touch_layout();
+            self.pad.touch_state = PadState::default();
+            self.touch_sneak(false);
+            self.touch_keys(&[]);
+            return;
+        }
         let layout = self
             .touch_layout()
             .filter(|_| self.touch_playing())
@@ -253,6 +294,7 @@ impl Game<'_> {
             self.pad.touch_layout = None;
             self.pad.touch_state = PadState::default();
             self.touch_sneak(false);
+            self.touch_keys(&[]);
             return;
         };
         // Sneak follows the game's own Sneak option (Toggle or Hold), not the
@@ -260,6 +302,13 @@ impl Game<'_> {
         self.pad.touch.sneak_taps = self.settings.toggle_crouch;
         let frame = self.pad.touch.frame(&layout, Instant::now());
         self.touch_sneak(frame.held.contains(&TouchButton::Sneak));
+        // The player's own buttons press their keys as the keyboard does.
+        let keys: Vec<KeyCode> = frame
+            .keys
+            .iter()
+            .filter_map(|name| horizon_client::keybinds::key_code(name))
+            .collect();
+        self.touch_keys(&keys);
         let mut state = PadState {
             left: frame.stick,
             ..PadState::default()
@@ -329,6 +378,47 @@ impl Game<'_> {
         }
     }
 
+    /// The keys the player's buttons hold: those newly wanted are pressed,
+    /// those no longer wanted released.
+    fn touch_keys(&mut self, wanted: &[KeyCode]) {
+        if wanted.is_empty() && self.pad.touch_keys.is_empty() {
+            return;
+        }
+        let down = std::mem::take(&mut self.pad.touch_keys);
+        for key in &down {
+            if !wanted.contains(key) {
+                self.touch_key(*key, false);
+            }
+        }
+        for key in wanted {
+            if !down.contains(key) {
+                self.touch_key(*key, true);
+            }
+        }
+        self.pad.touch_keys = wanted.to_vec();
+    }
+
+    /// A key a button of the player's presses or lets go of, the way the
+    /// window's keyboard event does for a key in a world: native mods hear
+    /// it (`native_key`), then the key's mappings.
+    fn touch_key(&mut self, key: KeyCode, down: bool) {
+        if down {
+            self.physical_keys.insert(key);
+        } else {
+            self.physical_keys.remove(&key);
+        }
+        self.native_key_event(key, down, false);
+        if down
+            && horizon_client::keybinds::key_name(key)
+                .is_some_and(|n| self.settings.keys.get("key.smoothCamera") == n)
+        {
+            self.smooth_camera_action();
+        }
+        if let Err(e) = self.mapped_key_event(key, down, false) {
+            log::warn!("Horizon: touch key {key:?}: {e}");
+        }
+    }
+
     /// The Sneak button as the sneak key, pressed and released on its edges:
     /// the game's own Sneak option makes it a toggle or a hold
     /// (`ToggleKeyMapping`), as for the keyboard's Shift.
@@ -369,7 +459,7 @@ impl Game<'_> {
 
     /// The controls over the HUD while playing, or the layout editor.
     pub(super) fn draw_touch_controls(&self, batch: &mut HudBatch) {
-        if !TOUCH_CONTROLS || !self.touch_playing() {
+        if !TOUCH_CONTROLS || !(self.pad.touch.editing() || self.touch_playing()) {
             return;
         }
         let atlas = &self.gui.atlas;
@@ -390,6 +480,10 @@ impl Game<'_> {
                         self.pad.touch.pressed(button)
                     };
                     draw_button(batch, atlas, button, item.area, item.opacity, pressed);
+                }
+                Control::Custom(id) => {
+                    let pressed = self.pad.touch.pressed_custom(id);
+                    self.draw_custom(batch, id, item.area, item.opacity, pressed);
                 }
                 Control::Stick => {
                     let r = layout.stick_radius;
@@ -422,6 +516,7 @@ impl Game<'_> {
             let a = item.area;
             match item.control {
                 Control::Button(button) => draw_button(batch, atlas, button, a, k, false),
+                Control::Custom(id) => self.draw_custom(batch, id, a, k, false),
                 Control::Stick => {
                     outline(batch, atlas, a, faded(EDGE, 0.5));
                     let home = layout.stick_home;
@@ -501,7 +596,110 @@ impl Game<'_> {
             INK,
             true,
         );
+        if let Some(menu) = view.menu {
+            self.draw_touch_menu(batch, layout, menu);
+        }
+        if let Some(picker) = view.picker {
+            self.draw_touch_picker(batch, layout, picker);
+        }
     }
+
+    /// One of the player's buttons: a copy of a built-in one looks like it;
+    /// the rest show their key's name (a question mark while they have none).
+    fn draw_custom(&self, batch: &mut HudBatch, id: u32, a: Area, k: f32, pressed: bool) {
+        let atlas = &self.gui.atlas;
+        let bind = self.pad.touch.custom(id).map(|c| &c.bind);
+        if let Some(Bind::Button(button)) = bind {
+            draw_button(batch, atlas, *button, a, k, pressed);
+            return;
+        }
+        let (face, ink) = if pressed {
+            (FACE_PRESSED, INK_PRESSED)
+        } else {
+            (FACE, INK)
+        };
+        batch.fill(atlas, a.x, a.y, a.w, a.h, faded(face, k));
+        outline(batch, atlas, a, faded(EDGE, k));
+        let label = match bind {
+            Some(Bind::Key(name)) => horizon_client::keybinds::display_name(name).plain(),
+            _ => "?".to_owned(),
+        };
+        centred_label(batch, atlas, &label, a, faded(ink, k));
+    }
+
+    /// The long press's menu: its items, the ones that can't be used dimmed.
+    fn draw_touch_menu(&self, batch: &mut HudBatch, layout: &Layout, menu: EditorMenu) {
+        let atlas = &self.gui.atlas;
+        for (item, a, usable) in menu.items(layout) {
+            batch.fill(atlas, a.x, a.y, a.w, a.h, MENU_FACE);
+            outline(batch, atlas, a, EDGE);
+            let label = horizon_client::lang::get(item.label());
+            centred_label(batch, atlas, &label, a, if usable { INK } else { MENU_OFF });
+        }
+    }
+
+    /// The key picker: every key of the page, the bound one lit, and the
+    /// page, unbind and cancel buttons.
+    fn draw_touch_picker(&self, batch: &mut HudBatch, layout: &Layout, picker: Picker) {
+        let atlas = &self.gui.atlas;
+        batch.fill(atlas, 0.0, 0.0, batch.width, batch.height, 0xf000_0000);
+        let grid = picker.grid(layout);
+        let bound = match self.pad.touch.custom(picker.id).map(|c| &c.bind) {
+            Some(Bind::Key(name)) => Some(name.as_str()),
+            _ => None,
+        };
+        let title = horizon_client::lang::get("horizon.touch.key.title");
+        let title = format!("{title} ({}/{})", grid.page + 1, grid.pages);
+        let title = fit(atlas, &title, layout.safe.w - 8.0);
+        let width = HudBatch::text_width(atlas, &title);
+        batch.text(
+            atlas,
+            &title,
+            layout.safe.x + (layout.safe.w - width) / 2.0,
+            layout.safe.y + 5.0,
+            INK,
+            true,
+        );
+        for (hit, a) in grid.cells {
+            let (label, face) = match hit {
+                PickerHit::Key(name) => (
+                    horizon_client::keybinds::display_name(name).plain(),
+                    if bound == Some(name) {
+                        0xd030_8040
+                    } else {
+                        MENU_FACE
+                    },
+                ),
+                PickerHit::Prev => ("<".to_owned(), 0xc020_2020),
+                PickerHit::Next => (">".to_owned(), 0xc020_2020),
+                PickerHit::Clear => (
+                    horizon_client::lang::get("horizon.touch.key.clear"),
+                    0xc020_2020,
+                ),
+                PickerHit::Cancel => (
+                    horizon_client::lang::get("horizon.touch.key.cancel"),
+                    0xc020_2020,
+                ),
+            };
+            batch.fill(atlas, a.x, a.y, a.w, a.h, face);
+            outline(batch, atlas, a, EDGE);
+            centred_label(batch, atlas, &label, a, INK);
+        }
+    }
+}
+
+/// `label` in `a`'s middle, cut to fit it.
+fn centred_label(batch: &mut HudBatch, atlas: &HudAtlas, label: &str, a: Area, ink: u32) {
+    let label = fit(atlas, label, a.w - 4.0);
+    let width = HudBatch::text_width(atlas, &label);
+    batch.text(
+        atlas,
+        &label,
+        a.x + (a.w - width) / 2.0,
+        a.y + (a.h - 8.0) / 2.0,
+        ink,
+        true,
+    );
 }
 
 /// On iOS the touch controls are drawn and played.
