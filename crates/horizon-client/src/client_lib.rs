@@ -16,7 +16,7 @@ pub use horizon_client_render::{
     cit_armor, cit_assets, cit_glint, client_resources, clouds, collisions, command_block,
     containers, controller_ui, crash, custom_sky, datapack, dynamic_light, effects, environment,
     extras, fast_hash, fluid_render, fog, font, gfx, graphics, graphics_style, graphics_ui,
-    hdr_calibration, hud, hud_kit, hud_layout, hud_overlays, inventory_effects, java_text,
+    hdr_calibration, hud, hud_kit, hud_layout, hud_overlays, inventory_effects, ios_mod_registry, java_text,
     jigsaw_block, json_folder, level_loading, light, lod, logging, menu_blur, menu_style, mesher,
     minimap, mipmap, mod_browser, mod_list, model_library, models, multiline_edit, native_emissive,
     options_file, options_fixes, options_ui, overlay, pack_browser, pack_formats, pack_hooks,
