@@ -1,0 +1,69 @@
+name: iOS build (sync-upstream)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [sync-upstream]
+    paths-ignore:
+      - packaging/ios/builder/**
+      - packaging/ios/native-mods.md
+      - .github/workflows/ios-mods-*.yml
+      - .github/workflows/ios-native-*.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ipa:
+    runs-on: macos-15-intel
+    permissions:
+      contents: write
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+          
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ios
+          
+      - name: Build
+        env:
+          IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+          HORIZON_IOS_REPO: ${{ github.repository }}
+        run: cargo build --profile ios --locked --target aarch64-apple-ios -p horizon-client --bin horizon-client
+        
+      - name: Package
+        id: package
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/horizon-client/Cargo.toml | head -1)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          packaging/ios/package.sh target/aarch64-apple-ios/ios/horizon-client "$version" dist
+          
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Horizon-ios
+          path: dist/Horizon.ipa
+          if-no-files-found: error
+          
+      - name: Publish the release
+        if: github.ref == 'refs/heads/sync-upstream'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.package.outputs.version }}
+        run: |
+          tag=sync-r$GITHUB_RUN_NUMBER
+          cp dist/Horizon.ipa "dist/Horizon-ios-$VERSION-sync-r$GITHUB_RUN_NUMBER.ipa"
+          gh release create "$tag" "dist/Horizon-ios-$VERSION-sync-r$GITHUB_RUN_NUMBER.ipa" \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
+            --title "Horizon for iOS $VERSION (sync-upstream build $GITHUB_RUN_NUMBER)" \
+            --notes-file packaging/ios/README.md
