@@ -29,6 +29,18 @@ pub fn worker_count() -> usize {
     })
 }
 
+/// The machine's cores, except on iOS: an iPhone's cores are few fast ones and several
+/// slow efficiency ones (A13: 2 + 4), `available_parallelism` counts them alike, and
+/// pools sized to all of them leave the render, server and submit threads sharing the
+/// fast cores with the meshers, while the whole chip's heat and memory traffic climb
+/// until the phone throttles (stutter). Four leaves the pools (all but one of it for
+/// chunks, a third for far terrain) three workers and the fast cores to the frame.
+/// `HORIZON_WORKER_THREADS` still overrides it.
+fn default_worker_count() -> usize {
+    let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+    if cfg!(target_os = "ios") { cores.min(4) } else { cores }
+}
+
 /// `HORIZON_SERIAL_TICK=all`: every [`par_chunks_mut`] keeps its chunks on the
 /// calling thread, in order — the serial reference a parallel phase of the
 /// tick is checked against, tick by tick (#8158).
