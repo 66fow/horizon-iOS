@@ -179,6 +179,10 @@ impl Options {
         let mut o = Self {
             resources: if sibling.join("horizon-resources.json").exists() {
                 sibling
+            } else if cfg!(target_os = "ios") {
+                // The app's Documents folder (the working directory, entry.rs), where the
+                // Files app copies the prepared resources.
+                "resources".into()
             } else {
                 std::path::Path::new(".local/horizon-client").join(horizon_core::VANILLA_VERSION)
             },
