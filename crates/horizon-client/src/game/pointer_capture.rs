@@ -259,7 +259,10 @@ impl Game<'_> {
     /// it: a genuinely hidden `--offscreen` run, an agent's window no one has clicked yet, or a
     /// scripted run, which plays the game while the person may be using the computer.
     pub(super) fn internal_grab(&self) -> bool {
+        // iOS has no pointer to grab, as a hidden `--offscreen` run doesn't: the grab is the
+        // game's own, so the world plays (touch.rs turns the view).
         (self.options.offscreen && !self.split_window)
+            || cfg!(target_os = "ios")
             || self.unclaimed_window
             || self.scripted_run()
     }
