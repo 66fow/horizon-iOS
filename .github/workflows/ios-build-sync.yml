@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   ipa:
-    runs-on: macos-15-intel
+    runs-on: macos-15
     permissions:
       contents: write
     timeout-minutes: 120
@@ -40,7 +40,7 @@ jobs:
         env:
           IPHONEOS_DEPLOYMENT_TARGET: "15.0"
           HORIZON_IOS_REPO: ${{ github.repository }}
-        run: cargo build --profile ios --locked --target aarch64-apple-ios -p horizon-client --bin horizon-client
+        run: cargo build --profile ios --target aarch64-apple-ios -p horizon-client --bin horizon-client
         
       - name: Package
         id: package
