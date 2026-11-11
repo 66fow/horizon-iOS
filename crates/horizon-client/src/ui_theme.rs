@@ -700,8 +700,8 @@ fn ios_boot(atlas: &HudAtlas, batch: &mut HudBatch) {
     let scale = batch.scale;
     let mut ui = Ui::new(atlas, batch, (0.0, 0.0));
     let k = scale / ui.density;
-    let size = (ui.w / 18.0).clamp(DISPLAY, 80.0);
-    let small = (size * 0.25).clamp(MICRO, 16.0);
+    let size = (ui.w / 18.0).clamp(display, 80.0);
+    let small = (size * 0.25).clamp(micro, 16.0);
     let y = (top + h) * k + size * 0.2;
     ui.text_centered(
         Face::SemiBold,
