@@ -65,8 +65,6 @@ jobs:
           }
 
           shopt -s nullglob
-          # 1) .hnmod files: the file name can be anything (connected_textures-0.1.5.hnmod);
-          #    the id is read from the mod itself.
           for f in "$src"/*.hnmod; do
             tmp=$(mktemp -d)
             unzip -q "$f" -d "$tmp" || { echo "::error::$(basename "$f") is not a zip"; exit 1; }
@@ -86,7 +84,6 @@ jobs:
             rm -rf "$tmp"
             finish "$id"
           done
-          # 2) plain folders mod-list/<id>/mixins/<id>/...
           for d in "$src"/*/; do
             id=$(basename "$d")
             [ -d "$d/mixins" ] || continue
@@ -100,7 +97,6 @@ jobs:
           if find mods -type l | grep -q .; then echo "::error::a mod has links in it"; exit 1; fi
           if [ -z "${ids// /}" ]; then echo "::error::no mods in mod-list/ (add <id>.hnmod files)"; exit 1; fi
           echo "mods=${ids# }" >> "$GITHUB_OUTPUT"
-          # The folder is not part of the game's source.
           rm -rf horizon/mod-list
 
       - name: Linux libraries the launcher links
@@ -126,8 +122,6 @@ jobs:
           echo "$revision" > horizon/.horizon-revision
           find horizon -type l -print -delete
           rm -rf horizon/.git
-          # Each mod is tried alone first: one that does not apply to this branch's source is
-          # skipped (and named in the log and the release notes) instead of failing the whole build.
           ok=""; skipped=""
           for d in mods/*/; do
             id=$(basename "$d")
@@ -179,6 +173,8 @@ jobs:
     needs: stage
     runs-on: macos-15-intel
     timeout-minutes: 150
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -217,3 +213,15 @@ jobs:
           name: Horizon-ios-folder-mods
           path: dist/Horizon.ipa
           if-no-files-found: error
+          
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.package.outputs.version }}
+        run: |
+          tag=modded-r$GITHUB_RUN_NUMBER
+          cp dist/Horizon.ipa "dist/Horizon-ios-$VERSION-modded-r$GITHUB_RUN_NUMBER.ipa"
+          gh release create "$tag" "dist/Horizon-ios-$VERSION-modded-r$GITHUB_RUN_NUMBER.ipa" \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
+            --title "Horizon for iOS $VERSION (Modded build $GITHUB_RUN_NUMBER)" \
+            --notes "Custom iOS build with native mods from mod-list/ folder."
