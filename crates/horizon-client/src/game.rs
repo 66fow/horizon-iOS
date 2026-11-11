@@ -190,6 +190,7 @@ mod interaction_shapes;
 mod interactions;
 mod inventory_input;
 mod inventory_slots;
+mod ios_mods;
 mod item_actions;
 mod item_areas;
 #[cfg(test)]
@@ -565,7 +566,8 @@ use key_codes::{
 };
 use launch_options::Options;
 use loading_screen::{
-    App, Loading, leave_fullscreen_after, missing_resources, run_event_loop, unclean_start_recovery,
+    App, Loading, follow_window_size, leave_fullscreen_after, missing_resources, run_event_loop,
+    unclean_start_recovery, window_size,
 };
 use loading_window::{
     build_renderer, loading_frame, loading_renderer, prepare_renderer_textures, start_game,
@@ -638,6 +640,8 @@ const AUTO_UPLOAD_TIME_ARRIVING: Duration = Duration::from_millis(3);
 /// A frame's finished meshes up to this many upload at once, unqueued.
 #[cfg(not(target_os = "ios"))]
 const AUTO_UPLOADS_AT_ONCE: usize = 8;
+#[cfg(target_os = "ios")]
+const AUTO_UPLOADS_AT_ONCE: usize = 3;
 /// The most changed columns far terrain waits on behind a mod's hold (`Game::lod_held`): past
 /// it, they go in as ever.
 const HELD_FAR_COLUMNS: usize = 1 << 13;
@@ -2089,6 +2093,16 @@ fn portal_ticket_can_expire(
 /// from the keysym the keymap resolved instead. This includes function keys on
 /// remapped media rows; ordinary character bindings still use their physical key.
 fn follow_keymap(event: &mut WindowEvent) {
+    // The iPhone keyboard's Return arrives as the text "\n" (winit's insertText): it's Enter.
+    #[cfg(target_os = "ios")]
+    if let WindowEvent::KeyboardInput { event, .. } = event
+        && matches!(&event.logical_key, winit::keyboard::Key::Character(c) if c == "\n" || c == "\r")
+    {
+        event.logical_key = winit::keyboard::Key::Named(winit::keyboard::NamedKey::Enter);
+        event.physical_key = PhysicalKey::Code(KeyCode::Enter);
+        event.text = None;
+        return;
+    }
     if let WindowEvent::KeyboardInput { event, .. } = event {
         follow_named_keymap(&event.logical_key, &mut event.physical_key);
     }
@@ -5845,6 +5859,9 @@ impl Game<'_> {
         self.frame_graph
             .draw(self.settings.horizon.overlay, &mut batch, &self.gui.atlas);
         self.draw_pad_over_hud(&mut batch);
+        self.draw_touch_controls(&mut batch);
+        self.draw_touch_close(&mut batch);
+        self.draw_mods(&mut batch);
         batch
     }
     fn hud_layers(&mut self, size: [u32; 2]) -> HudBatch {
@@ -6112,9 +6129,13 @@ impl Game<'_> {
                 self.keep_status_rows(&draws, wi, hi);
                 // The rows draw in one pass here, so a mod's `player_health`
                 // layer stands for the armor, food and air rows too.
-                self.gui_layer("minecraft:player_health", &mut batch, |g, batch| {
-                    hud_layout::paint(batch, &g.gui.atlas, &draws);
-                });
+                {
+                    let mark = batch.vertices.len();
+                    self.gui_layer("minecraft:player_health", &mut batch, |g, batch| {
+                        hud_layout::paint(batch, &g.gui.atlas, &draws);
+                    });
+                    self.touch_follow_hotbar(&mut batch, mark);
+                }
                 // Hud.playAirBubblePoppedSound: Player.playSound (PLAYERS), heard
                 // by this client only.
                 if let Some((volume, pitch)) = self.health_hud.bubble_pop_sound.take() {
@@ -6129,46 +6150,54 @@ impl Game<'_> {
                 }
             }
             // After the health rows (Hud.extractHotbarAndDecorations): jump, locator or XP bar.
-            self.gui_layer("minecraft:contextual_info_bar", &mut batch, |g, batch| {
-                if contextual == ContextualBar::JumpableVehicle {
-                    g.draw_jump_bar(batch, wi, hi);
-                }
-                if contextual == ContextualBar::Locator {
-                    let (sprite, [x, y, w, h]) = horizon_client::locator_bar::background(wi, hi);
-                    horizon_client::ui::nine_slice(
-                        batch,
-                        &g.gui.atlas,
-                        sprite,
-                        x as f32,
-                        y as f32,
-                        w as f32,
-                        h as f32,
-                        u32::MAX,
-                    );
-                }
-                if has_experience && g.player.is_some() {
-                    let atlas = &g.gui.atlas;
-                    let width = |s: &str| HudBatch::text_width(atlas, s) as i32;
-                    let draws = hud_layout::experience_colored(
-                        g.pack.polytone_colors.xp_bar,
-                        wi,
-                        hi,
-                        g.experience.progress,
-                        g.experience.level,
-                        contextual == ContextualBar::Experience,
-                        &width,
-                    );
-                    hud_layout::paint(batch, atlas, &draws);
-                }
-                if contextual == ContextualBar::Locator {
-                    let draws = g.locator_bar_draws(wi, hi);
-                    hud_layout::paint(batch, &g.gui.atlas, &draws);
-                }
-            });
-            if !spectator {
-                self.gui_layer("minecraft:selected_item_name", &mut batch, |g, batch| {
-                    g.draw_selected_name(batch, !g.creative);
+            {
+                let mark = batch.vertices.len();
+                self.gui_layer("minecraft:contextual_info_bar", &mut batch, |g, batch| {
+                    if contextual == ContextualBar::JumpableVehicle {
+                        g.draw_jump_bar(batch, wi, hi);
+                    }
+                    if contextual == ContextualBar::Locator {
+                        let (sprite, [x, y, w, h]) = horizon_client::locator_bar::background(wi, hi);
+                        horizon_client::ui::nine_slice(
+                            batch,
+                            &g.gui.atlas,
+                            sprite,
+                            x as f32,
+                            y as f32,
+                            w as f32,
+                            h as f32,
+                            u32::MAX,
+                        );
+                    }
+                    if has_experience && g.player.is_some() {
+                        let atlas = &g.gui.atlas;
+                        let width = |s: &str| HudBatch::text_width(atlas, s) as i32;
+                        let draws = hud_layout::experience_colored(
+                            g.pack.polytone_colors.xp_bar,
+                            wi,
+                            hi,
+                            g.experience.progress,
+                            g.experience.level,
+                            contextual == ContextualBar::Experience,
+                            &width,
+                        );
+                        hud_layout::paint(batch, atlas, &draws);
+                    }
+                    if contextual == ContextualBar::Locator {
+                        let draws = g.locator_bar_draws(wi, hi);
+                        hud_layout::paint(batch, &g.gui.atlas, &draws);
+                    }
                 });
+                self.touch_follow_hotbar(&mut batch, mark);
+            }
+            if !spectator {
+                {
+                    let mark = batch.vertices.len();
+                    self.gui_layer("minecraft:selected_item_name", &mut batch, |g, batch| {
+                        g.draw_selected_name(batch, !g.creative);
+                    });
+                    self.touch_follow_hotbar(&mut batch, mark);
+                }
             }
         }
         // Hud.extractSleepOverlay: over all health/food bars, under titles and chat.
