@@ -28,7 +28,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ios-build
+          ref: sync-upstream
           path: horizon
           persist-credentials: false
 
@@ -182,7 +182,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ios-build
+          ref: sync-upstream
           path: horizon
           persist-credentials: false
       - uses: actions/download-artifact@v4
