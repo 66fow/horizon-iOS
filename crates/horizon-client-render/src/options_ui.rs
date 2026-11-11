@@ -1410,6 +1410,11 @@ enum Act {
     /// A registered page's row: (page, row).
     PageRow(usize, usize),
     OpenModFolder,
+    /// The Mods page's Get Mods button (iOS): open the mods screen.
+    GetMods,
+    /// The Controls page's Custom Controls button (iOS): open the touch
+    /// controls' layout editor.
+    EditTouchControls,
     /// Browse mods: the page of listing `.0` of `mod_browser`.
     ModProject(usize),
     /// The open project page's Install or Update.
@@ -1538,6 +1543,10 @@ pub enum Event {
     /// Data Packs' Open Pack Folder: create the folder if needed and open it.
     OpenDataPackFolder(std::path::PathBuf),
     OpenModFolder,
+    /// The Mods page's Get Mods button (iOS, which has no launcher): open the mods screen.
+    GetMods,
+    /// The Controls page's Custom Controls button (iOS): open the touch controls' editor.
+    EditTouchControls,
     /// Browse mods opened: read the registry's index into `mod_browser`.
     BrowseMods,
     /// Install (or update) the registry's content mod with this id.
@@ -2832,6 +2841,14 @@ impl OptionsUi {
                     Act::Push(Page::ModBrowser),
                 );
                 let mut rows = vec![Row::Buttons(browse, None)];
+                // iOS has no launcher to get mods from: the mods screen (native and
+                // made-here mods too) opens from this page's Get Mods button.
+                if cfg!(target_os = "ios") {
+                    rows.push(Row::Buttons(
+                        button(0.0, 0.0, 310.0, tr("horizon.mods.get_mods"), Act::GetMods),
+                        None,
+                    ));
+                }
                 if let Some(note) = &self.mods_note {
                     rows.extend(wrap(note, 64).into_iter().map(Row::Note));
                 }
@@ -4158,6 +4175,8 @@ impl OptionsUi {
                         Act::NativeButton(i, b) => events.push(Event::NativeButton(i, b)),
                         Act::PageRow(p, r) => events.extend(self.page_act(p, r, self.shift)),
                         Act::OpenModFolder => events.push(Event::OpenModFolder),
+                        Act::GetMods => events.push(Event::GetMods),
+                        Act::EditTouchControls => events.push(Event::EditTouchControls),
                         Act::ModProject(i) => {
                             if let Some(listing) = self.mod_browser.listings.get(i) {
                                 self.mod_project = listing.id.clone();
@@ -5055,6 +5074,8 @@ impl OptionsUi {
                         Act::NativeButton(i, b) => events.push(Event::NativeButton(i, b)),
                         Act::PageRow(p, r) => events.extend(self.page_act(p, r, shift)),
                         Act::OpenModFolder => events.push(Event::OpenModFolder),
+                        Act::GetMods => events.push(Event::GetMods),
+                        Act::EditTouchControls => events.push(Event::EditTouchControls),
                         Act::ModProject(i) => {
                             if let Some(listing) = self.mod_browser.listings.get(i) {
                                 self.mod_project = listing.id.clone();
