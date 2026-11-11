@@ -4,6 +4,8 @@
 //! (`run_loading`) and the smoke run's report (`write_report`).
 use super::*;
 
+use crate::game::loading_screen::BigStack;
+
 /// CPU-only startup data, owned by one loader generation. No file reads or
 /// model baking are needed when the event loop installs this bundle.
 pub(super) struct GameCpuResources {
@@ -298,7 +300,7 @@ pub(super) fn run_loading(
         error: None,
     };
     let mut app = App::Loading(Box::new(loading));
-    let result = EventLoop::new()?.run_app(&mut app);
+    let result = EventLoop::new()?.run_app(&mut BigStack(&mut app));
     narrator::stop();
     match &mut app {
         // Ready: splitscreen around P1's game.
