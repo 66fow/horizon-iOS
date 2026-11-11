@@ -29,7 +29,7 @@ pub(super) fn run_event_loop(mut game: Game<'_>) -> Result<()> {
         return game.error.take().map_or(Ok(()), Err);
     }
     let mut split = split::Split::new(game);
-    let result = EventLoop::new()?.run_app(&mut split);
+    let result = EventLoop::new()?.run_app(&mut BigStack(&mut split));
     game = split.host;
     narrator::stop();
     leave_fullscreen_after(&result, &mut game.settings);
@@ -106,8 +106,7 @@ impl Loading {
         // `--offscreen` renders into a texture: its window would only show white.
         let window_step = startup::step("window.create");
         let window = match event_loop.create_window(
-            attributes
-                .with_inner_size(winit::dpi::LogicalSize::new(size[0], size[1]))
+            window_size(attributes, size)
                 .with_fullscreen(fullscreen.then_some(winit::window::Fullscreen::Borderless(None)))
                 .with_visible(!self.options.as_ref().is_some_and(|o| o.offscreen)),
         ) {
@@ -231,6 +230,7 @@ impl Loading {
         self.ui_at = Some(Instant::now());
     }
     pub(super) fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        follow_window_size(self.window.as_deref(), self.renderer.as_mut());
         // The loop may run once more after exit(): keep the first error, the
         // one that ended loading.
         if self.error.is_some() {
@@ -402,6 +402,19 @@ impl ApplicationHandler for App {
         }
     }
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        // iOS sends touches and no mouse: while loading, the first finger is
+        // the mouse; the game itself handles them once it is ready (touch.rs).
+        #[cfg(target_os = "ios")]
+        if matches!(self, App::Loading(_)) && matches!(event, WindowEvent::Touch(_)) {
+            thread_local! {
+                static TOUCH: std::cell::RefCell<horizon_client_input::touch::TouchMouse> =
+                    Default::default();
+            }
+            for event in TOUCH.with_borrow_mut(|t| t.translate(event)) {
+                self.window_event(event_loop, id, event);
+            }
+            return;
+        }
         match self {
             App::Loading(loading) => loading.window_event(event_loop, id, event),
             App::Ready(game) => game.window_event(event_loop, id, event),
@@ -462,6 +475,96 @@ impl ApplicationHandler for App {
             game.exiting(event_loop);
         }
     }
+}
+
+/// The event loop's handler, run on a big stack on iOS. iOS gives the main thread 1 MB of stack,
+/// fixed (8 MB on macOS and Linux, and Windows' is raised to 8 MB in build.rs): finishing the
+/// loading screen alone takes over half of it, and it overflowed there (SIGSEGV in
+/// `Loading::finish`). Each callback runs on a fresh 64 MB stack (reserved, not used, until it
+/// is touched); elsewhere the handler runs as it is.
+struct BigStack<'a, A>(&'a mut A);
+
+impl<A> BigStack<'_, A> {
+    #[inline]
+    fn run<R>(&mut self, f: impl FnOnce(&mut A) -> R) -> R {
+        #[cfg(target_os = "ios")]
+        {
+            let app = &mut *self.0;
+            stacker::maybe_grow(4 << 20, 64 << 20, move || f(app))
+        }
+        #[cfg(not(target_os = "ios"))]
+        f(self.0)
+    }
+}
+
+impl<A: ApplicationHandler> ApplicationHandler for BigStack<'_, A> {
+    fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: winit::event::StartCause) {
+        self.run(|a| a.new_events(event_loop, cause));
+    }
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        self.run(|a| a.resumed(event_loop));
+    }
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: ()) {
+        self.run(|a| a.user_event(event_loop, event));
+    }
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        self.run(|a| a.window_event(event_loop, id, event));
+    }
+    fn device_event(&mut self, event_loop: &ActiveEventLoop, id: DeviceId, event: DeviceEvent) {
+        self.run(|a| a.device_event(event_loop, id, event));
+    }
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        self.run(|a| a.about_to_wait(event_loop));
+    }
+    fn suspended(&mut self, event_loop: &ActiveEventLoop) {
+        self.run(|a| a.suspended(event_loop));
+    }
+    fn exiting(&mut self, event_loop: &ActiveEventLoop) {
+        self.run(|a| a.exiting(event_loop));
+    }
+    fn memory_warning(&mut self, event_loop: &ActiveEventLoop) {
+        self.run(|a| a.memory_warning(event_loop));
+    }
+}
+
+/// `attributes` sized `size` (logical pixels). An iOS window always fills the screen: a size
+/// asked for there makes the window that size, larger than the screen, so the frame is cut off.
+pub(super) fn window_size(
+    attributes: winit::window::WindowAttributes,
+    size: [f64; 2],
+) -> winit::window::WindowAttributes {
+    if cfg!(target_os = "ios") {
+        attributes
+    } else {
+        attributes.with_inner_size(winit::dpi::LogicalSize::new(size[0], size[1]))
+    }
+}
+
+/// iOS gives the window its size after the renderer has configured its
+/// surface, often with no `Resized`: a surface left at the size it started
+/// with draws one stretched pixel, a screen of one colour. The renderer takes
+/// the window's (outer) size when they differ. Elsewhere `Resized` does this.
+pub(super) fn follow_window_size(window: Option<&Window>, renderer: Option<&mut Renderer>) {
+    #[cfg(target_os = "ios")]
+    if let (Some(window), Some(renderer)) = (window, renderer) {
+        // The outer size: the view, and so the surface, covers the whole screen; the inner
+        // size is only the safe area (clear of the notch and the home bar).
+        let size = window.outer_size();
+        if size.width > 0
+            && size.height > 0
+            && (size.width, size.height) != (renderer.config.width, renderer.config.height)
+        {
+            log::info!(
+                "Horizon: the window is {}x{}: resizing the surface",
+                size.width,
+                size.height
+            );
+            renderer.resize(size.width, size.height);
+            window.request_redraw();
+        }
+    }
+    #[cfg(not(target_os = "ios"))]
+    let _ = (window, renderer);
 }
 
 /// Every launch reads the prepared game files (`horizon-prepare`'s output, whose
