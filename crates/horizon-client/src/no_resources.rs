@@ -99,16 +99,19 @@ impl NoResources {
             .map(|p| wrap(ui, Face::Regular, body(), p, width))
             .collect();
         let text_h = lines.iter().map(|l| l.len() as f32 * LINE).sum::<f32>()
-            + (lines.len() - 1) as f32 * PARAGRAPH_GAP;
-        let height = TITLE_LINE + 16.0 + text_h + 28.0 + control() + 20.0 + SMALL_LINE;
+            + lines.len().saturating_sub(1) as f32 * PARAGRAPH_GAP;
+        let small_lines: usize = self
+            .small
+            .iter()
+            .map(|s| wrap(ui, Face::Regular, ui_theme::small(), s, width).len())
+            .sum();
+        let height =
+            TITLE_LINE + 16.0 + text_h + 28.0 + control() + 20.0 + small_lines as f32 * SMALL_LINE;
         let y = ((ui.h - height) / 2.0).max(24.0).round();
         let buttons_y = y + TITLE_LINE + 16.0 + text_h + 28.0;
         let mut buttons = Vec::new();
         let mut bx = x;
-        for (label, action) in [
-            ("Download the launcher", Action::Download),
-            ("Quit", Action::Quit),
-        ] {
+        for (label, action) in &self.buttons {
             let w = (ui.measure(Face::Medium, button_text(), label) + 40.0).round();
             buttons.push(Button {
                 label: label.clone(),
@@ -139,37 +142,28 @@ impl NoResources {
             layout.x,
             y,
             color::text(),
-            TITLE,
+            &self.title,
         );
         y += TITLE_LINE + 16.0;
         for paragraph in &layout.lines {
             for line in paragraph {
-                ui.text_line(
-                    Face::Regular,
-                    body(),
-                    LINE,
-                    layout.x,
-                    y,
-                    color::text(),
-                    line,
-                );
+                ui.text_line(Face::Regular, body(), LINE, layout.x, y, color::text(), line);
                 y += LINE;
             }
             y += PARAGRAPH_GAP;
         }
         for button in &layout.buttons {
             let hovered = button.contains(ui.cursor);
-            let (plate, ink) = match (button.action, hovered) {
-                (Action::Download, false) => (color::accent(), color::on_accent()),
-                (Action::Download, true) => {
-                    (color::with_alpha(color::accent(), 0.85), color::on_accent())
-                }
-                (Action::Quit, false) => (color::raised(), color::text()),
-                (Action::Quit, true) => (color::hover(), color::text()),
+            let main = button.action != Action::Quit;
+            let (plate, ink) = match (main, hovered) {
+                (true, false) => (color::accent(), color::on_accent()),
+                (true, true) => (color::with_alpha(color::accent(), 0.85), color::on_accent()),
+                (false, false) => (color::raised(), color::text()),
+                (false, true) => (color::hover(), color::text()),
             };
             let h = control();
             ui.rounded(button.x, button.y, button.w, h, h / 2.0, plate);
-            let lw = ui.measure(Face::Medium, button_text(), button.label);
+            let lw = ui.measure(Face::Medium, button_text(), &button.label);
             let lx = button.x + ((button.w - lw) / 2.0).round();
             ui.text_line(
                 Face::Medium,
@@ -181,17 +175,13 @@ impl NoResources {
                 &button.label,
             );
         }
-        let small_y = layout.buttons[0].y + control() + 20.0;
-        for (i, line) in wrap(
-            ui,
-            Face::Regular,
-            ui_theme::small(),
-            &self.looked_in,
-            layout.width,
-        )
-        .iter()
-        .enumerate()
-        {
+        let small_y = y + 28.0 - PARAGRAPH_GAP + control() + 20.0;
+        let small: Vec<String> = self
+            .small
+            .iter()
+            .flat_map(|s| wrap(ui, Face::Regular, ui_theme::small(), s, layout.width))
+            .collect();
+        for (i, line) in small.iter().enumerate() {
             let line_y = small_y + i as f32 * SMALL_LINE;
             ui.text_line(
                 Face::Regular,
