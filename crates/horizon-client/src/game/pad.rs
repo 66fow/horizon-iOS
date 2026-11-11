@@ -69,8 +69,8 @@ pub(super) struct Pads {
     /// The controls' layout of the last frame, for fingers already down
     /// (touch.rs).
     pub(super) touch_layout: Option<(horizon_client_input::touch::Layout, f32)>,
-    /// The mods screen, when open (mod_browser.rs).
-    pub(super) mod_browser: Option<super::mod_browser::ModBrowser>,
+    /// The mods screen, when open (ios_mods.rs).
+    pub(super) mod_browser: Option<super::ios_mods::ModBrowser>,
     /// `touch-controls.txt` was read (touch.rs).
     pub(super) touch_loaded: bool,
     /// The finger acting as the mouse over menus.
@@ -337,10 +337,12 @@ impl Pads {
     /// radial menu swallowed holds nothing, while a sneak held since before the menu opened is
     /// still held through it.
     pub(super) fn holds_action(&self, action: &str) -> bool {
-        Button::ALL.into_iter().any(|button| {
-            self.actions[button as usize].contains(&action)
-                && (self.edges.is_held(button) || self.late_releases.contains(&button))
-        })
+        // The touch Sneak button presses the key itself, like a pad's latch.
+        (action == "key.sneak" && self.touch_sneak)
+            || Button::ALL.into_iter().any(|button| {
+                self.actions[button as usize].contains(&action)
+                    && (self.edges.is_held(button) || self.late_releases.contains(&button))
+            })
     }
 
     /// A new player entity took over (spawn, respawn, a server joined, a
@@ -414,6 +416,8 @@ impl Game<'_> {
             return;
         }
         let hardware = match self.pad.feed {
+            // Controller support is off: only the touch controls act.
+            _ if !pad_on => PadState::default(),
             // A scripted run leaves the person's pad at rest and unread, as the window drops
             // their keys and mouse: a read makes a newly touched pad the active one, which lets
             // go of the run's A held in a menu. A held button lets go as the run starts and is
@@ -828,7 +832,8 @@ impl Game<'_> {
     /// The left stick as the move vector, while playing.
     pub(super) fn pad_move(&self) -> Option<[f32; 2]> {
         let settings = &self.settings.controller;
-        if !settings.enabled
+        let touch_live = self.pad.touch_state != PadState::default();
+        if (!settings.enabled && !touch_live)
             || self.pad_in_menu()
             || !self.pad_focused()
             || (self.pad_radial_captures() && self.pad_radial_selects(0))
