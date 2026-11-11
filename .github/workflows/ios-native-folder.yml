@@ -7,16 +7,9 @@ name: iOS build with mods from mod-list folder
 
 on:
   workflow_dispatch:
-    inputs:
-      instance:
-        description: "Instance number, digits (blank: a new instance). The same number updates that instance."
-        default: ""
-      name:
-        description: "The instance's name on the home screen (blank: Horizon <number>)"
-        default: ""
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: ios-native-folder
@@ -28,8 +21,6 @@ jobs:
     timeout-minutes: 90
     outputs:
       mods: ${{ steps.collect.outputs.mods }}
-      instance: ${{ steps.collect.outputs.instance }}
-      name: ${{ steps.collect.outputs.name }}
       package: ${{ steps.stage.outputs.package }}
       features: ${{ steps.stage.outputs.features }}
       mods_ok: ${{ steps.stage.outputs.mods_ok }}
@@ -43,19 +34,8 @@ jobs:
 
       - name: Collect the mods from mod-list/
         id: collect
-        env:
-          INSTANCE: ${{ inputs.instance }}
-          NAME: ${{ inputs.name }}
         run: |
           set -euo pipefail
-          if ! [[ "$INSTANCE" =~ ^[0-9]{4,12}$ ]]; then
-            INSTANCE=$(python3 -c 'import secrets; print(100000 + secrets.randbelow(900000))')
-          fi
-          NAME=$(printf '%s' "$NAME" | tr -d '<>&"\\/`$' | tr -s ' ' | cut -c1-30)
-          [ -n "$NAME" ] || NAME="Horizon $INSTANCE"
-          echo "instance=$INSTANCE" >> "$GITHUB_OUTPUT"
-          echo "name=$NAME" >> "$GITHUB_OUTPUT"
-
           src="$PWD/horizon/mod-list"
           [ -d "$src" ] || { echo "::error::the folder mod-list/ is not on the ios-build branch"; exit 1; }
           revision=$(git -C horizon rev-parse HEAD)
@@ -134,7 +114,7 @@ jobs:
           workspaces: horizon/launcher
           key: native-stage
       - name: Build the launcher's command line
-        run: cargo build --release --locked --manifest-path horizon/launcher/Cargo.toml --bin horizon-launcher
+        run: cargo build --release --manifest-path horizon/launcher/Cargo.toml --bin horizon-launcher
 
       - name: Stage the mods onto Horizon's source
         id: stage
@@ -197,7 +177,7 @@ jobs:
 
   ipa:
     needs: stage
-    runs-on: macos-15-intel
+    runs-on: macos-15
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
@@ -223,38 +203,17 @@ jobs:
           IPHONEOS_DEPLOYMENT_TARGET: "15.0"
           HORIZON_IOS_REPO: ${{ github.repository }}
         run: >-
-          cargo build --profile fast --locked --target aarch64-apple-ios
+          cargo build --profile fast --target aarch64-apple-ios
           -p ${{ needs.stage.outputs.package }} --bin horizon-client ${{ needs.stage.outputs.features }}
       - name: Package
         id: package
-        env:
-          IOS_INSTANCE: ${{ needs.stage.outputs.instance }}
-          IOS_NAME: ${{ needs.stage.outputs.name }}
         run: |
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' horizon/crates/horizon-client/Cargo.toml | head -1)
           echo "version=$version" >> "$GITHUB_OUTPUT"
           horizon/packaging/ios/package.sh ws/target/aarch64-apple-ios/fast/horizon-client "$version" dist
-      - name: Publish the release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.package.outputs.version }}
-          MODS: ${{ needs.stage.outputs.mods_ok }}
-          SKIPPED: ${{ needs.stage.outputs.skipped }}
-          INSTANCE: ${{ needs.stage.outputs.instance }}
-          NAME: ${{ needs.stage.outputs.name }}
-        run: |
-          tag=ios-folder-r$GITHUB_RUN_NUMBER
-          file="dist/Horizon-ios-$VERSION-folder-r$GITHUB_RUN_NUMBER-i$INSTANCE.ipa"
-          cp dist/Horizon.ipa "$file"
-          {
-            echo "Horizon for iOS with native mods from the mod-list folder: \`$MODS\`."
-            echo
-            echo "Instance **$NAME** ($INSTANCE): it installs as its own app, beside Horizon and other instances. Opened with \`horizon-i$INSTANCE://\`."
-            echo
-            [ -z "$SKIPPED" ] || { echo "Skipped (do not apply to this branch's source): \`$SKIPPED\`."; echo; }
-            echo "Native mods change the game's own code and run with full access to the app."
-          } > notes.md
-          gh release create "$tag" "$file" --repo "$GITHUB_REPOSITORY" --prerelease \
-            --title "$NAME: Horizon for iOS $VERSION with native mods (folder build $GITHUB_RUN_NUMBER)" \
-            --notes-file notes.md
-            
+          
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Horizon-ios-folder-mods
+          path: dist/Horizon.ipa
+          if-no-files-found: error
