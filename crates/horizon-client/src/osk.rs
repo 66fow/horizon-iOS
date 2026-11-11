@@ -325,9 +325,6 @@ impl Keyboard {
     /// Draw the keyboard across the bottom of the screen, or the top when
     /// the field it types into is in the lower half.
     pub fn draw(&self, ui: &mut Ui, at_top: bool, glyphs: Glyphs) {
-        const UNIT: f32 = 50.0;
-        const GAP: f32 = 6.0;
-        const KEY_H: f32 = 38.0;
         let width = 10.0 * UNIT + 9.0 * GAP;
         let (x0, y0, height) = Self::origin(ui.w, ui.h, at_top);
         ui.rounded(
