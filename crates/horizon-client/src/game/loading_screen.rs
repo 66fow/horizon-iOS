@@ -482,7 +482,7 @@ impl ApplicationHandler for App {
 /// loading screen alone takes over half of it, and it overflowed there (SIGSEGV in
 /// `Loading::finish`). Each callback runs on a fresh 64 MB stack (reserved, not used, until it
 /// is touched); elsewhere the handler runs as it is.
-struct BigStack<'a, A>(&'a mut A);
+pub struct BigStack<'a, A>(pub &'a mut A);
 
 impl<A> BigStack<'_, A> {
     #[inline]
