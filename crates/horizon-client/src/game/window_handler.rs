@@ -300,8 +300,7 @@ impl ApplicationHandler for Game<'_> {
         // `--offscreen` renders into a texture: its window would only show white.
         let window_step = startup::step("window.create");
         let window = match event_loop.create_window(
-            attributes
-                .with_inner_size(winit::dpi::LogicalSize::new(size[0], size[1]))
+            window_size(attributes, size)
                 .with_fullscreen(fullscreen.then_some(winit::window::Fullscreen::Borderless(None)))
                 .with_visible(!self.options.offscreen)
                 .with_active(!agent_started),
@@ -334,6 +333,21 @@ impl ApplicationHandler for Game<'_> {
         self.previous = Instant::now();
     }
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        // iOS sends touches and no mouse: the touch controls while playing,
+        // else the first finger is the mouse (touch.rs).
+        #[cfg(target_os = "ios")]
+        if let WindowEvent::Touch(touch) = event {
+            let lifted = touch.phase == winit::event::TouchPhase::Ended;
+            let events = self.touch_event(touch);
+            let clicked = lifted && !events.is_empty();
+            for event in events {
+                self.window_event(event_loop, id, event);
+            }
+            if clicked {
+                self.touch_tapped();
+            }
+            return;
+        }
         let key = if self.window.as_ref().is_some_and(|w| w.id() == id)
             && !self.scripted_run()
             && let WindowEvent::KeyboardInput {
@@ -383,6 +397,7 @@ impl ApplicationHandler for Game<'_> {
         }
     }
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        follow_window_size(self.window.as_deref(), self.renderer.as_mut());
         self.idle(event_loop);
     }
     /// The application is ending. On macOS, Quit (Cmd+Q) ends it through
