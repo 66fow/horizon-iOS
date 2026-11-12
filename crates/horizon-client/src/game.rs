@@ -192,6 +192,8 @@ mod inventory_input;
 mod inventory_slots;
 #[cfg(target_os = "ios")]
 mod ios_keyboard;
+#[cfg(target_os = "ios")]
+mod ios_memory;
 mod ios_mods;
 mod item_actions;
 mod item_areas;
