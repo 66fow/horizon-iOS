@@ -14,7 +14,9 @@ impl Game<'_> {
         if self.dialog_open() {
             return self.dialog_has_text_field();
         }
-        if self.title_input_active()
+        // The title takes text only on its own screens: Options, opened over it, has its
+        // own boxes (`control::title_owns_text`).
+        if super::control::title_owns_text(&self.screen, self.title.is_some())
             && let Some(title) = self.title.as_mut()
         {
             // A caret field, an append-only one (`focused_field`), or a game
@@ -37,6 +39,8 @@ impl Game<'_> {
             Screen::WorldOptions => self.world_options_typing(),
             Screen::Creative => self.mod_browser_typing() || self.creative_screen.tab().search,
             Screen::BlockEditor => self.block_editor.as_ref().is_some_and(|s| s.text_focused()),
+            #[cfg(target_os = "ios")]
+            Screen::Mod => self.opaque_screen_wants_keyboard(),
             Screen::Inventory => {
                 self.mod_browser_typing() || self.recipe_search_focused() || self.station_typing()
             }
@@ -135,7 +139,7 @@ impl Game<'_> {
         if self.dialog_type(&text) {
             return;
         }
-        if self.title_input_active() {
+        if super::control::title_owns_text(&self.screen, self.title.is_some()) {
             self.title_edit(Some(&text), false);
         } else if self.book.is_some() {
             self.book_input(None, Some(&text));
