@@ -249,6 +249,8 @@ use surface_setup::{AdapterChoice, AdapterFailure, open_adapter, pick_adapter, s
 mod off_page;
 pub mod submit;
 mod sunrise_fan;
+#[cfg(target_os = "ios")]
+mod memory_trim;
 mod timing;
 pub mod translucency;
 pub(crate) mod upload;
