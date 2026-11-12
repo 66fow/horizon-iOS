@@ -402,6 +402,13 @@ impl ApplicationHandler for Game<'_> {
         follow_window_size(self.window.as_deref(), self.renderer.as_mut());
         self.idle(event_loop);
     }
+
+    /// iOS's memory warning: give back what can be given back before the system acts.
+    #[cfg(target_os = "ios")]
+    fn memory_warning(&mut self, _event_loop: &ActiveEventLoop) {
+        self.on_memory_warning();
+    }
+    
     /// The application is ending. On macOS, Quit (Cmd+Q) ends it through
     /// applicationWillTerminate without a CloseRequested; vanilla's GLFW
     /// window turns it into a window close, so Minecraft.stop saves the world.
