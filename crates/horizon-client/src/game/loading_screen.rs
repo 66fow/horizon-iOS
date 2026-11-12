@@ -175,6 +175,7 @@ impl Loading {
         }
         horizon_client::hud::GUI_SCALE.store(self.settings.gui_scale, Ordering::Relaxed);
         self.window = Some(window);
+        follow_window_size(self.window.as_deref(), self.renderer.as_mut());
     }
     pub(super) fn window_event(
         &mut self,
@@ -185,6 +186,8 @@ impl Loading {
         if self.window.as_ref().is_none_or(|w| w.id() != id) {
             return;
         }
+        // Before a redraw draws, not after it (iOS sends no `Resized` for the first size).
+        follow_window_size(self.window.as_deref(), self.renderer.as_mut());
         follow_keymap(&mut event);
         if let Err(error) = self.menu_event(event_loop, event) {
             self.error = Some(error);
@@ -226,6 +229,9 @@ impl Loading {
             }
             Err(e) => self.error = Some(e),
         }
+        // The new surface starts at the size the renderer was built with: the first title
+        // frame would draw stretched until `about_to_wait`.
+        follow_window_size(self.window.as_deref(), self.renderer.as_mut());
         // The title frame's wait starts once its renderer is built.
         self.ui_at = Some(Instant::now());
     }
