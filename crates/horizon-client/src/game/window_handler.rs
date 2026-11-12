@@ -327,6 +327,8 @@ impl ApplicationHandler for Game<'_> {
             }
         }
         self.window = Some(window);
+        // iOS: the surface takes the window's size now, not one `about_to_wait` later.
+        follow_window_size(self.window.as_deref(), self.renderer.as_mut());
         self.ime_allowed = false;
         self.ime_area = None;
         self.apply_settings();
