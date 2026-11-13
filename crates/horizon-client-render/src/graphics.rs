@@ -458,6 +458,16 @@ impl LeafCullingMode {
             LeafCullingMode::Hollow => "Hollow",
         }
     }
+    /// The mode the mesher runs for this one. On iOS `Off` meshes as `Hidden`: a crown looks
+    /// the same from outside, and a forest's sections lose the cutout faces nobody sees, which
+    /// are most of their vertices (mesh memory, meshing and upload time, overdraw).
+    fn meshed(self) -> Self {
+        if cfg!(target_os = "ios") && self == LeafCullingMode::Off {
+            LeafCullingMode::Hidden
+        } else {
+            self
+        }
+    }
     /// Whether this mode draws interior leaf faces in the solid layer.
     pub fn is_interior(self) -> bool {
         matches!(
@@ -741,7 +751,7 @@ impl Graphics {
     /// models falls back to `Off`, which draws exactly vanilla's leaves.
     pub fn leaf_culling_effective(&self, resource_packs: &[String]) -> LeafCullingMode {
         if self.vanilla_models(resource_packs) {
-            self.leaf_culling
+            self.leaf_culling.meshed()
         } else {
             LeafCullingMode::Off
         }
@@ -753,7 +763,7 @@ impl Graphics {
         server_packs: impl IntoIterator<Item = &'a str>,
     ) -> LeafCullingMode {
         if self.vanilla_models_with_server_packs(resource_packs, server_packs) {
-            self.leaf_culling
+            self.leaf_culling.meshed()
         } else {
             LeafCullingMode::Off
         }
