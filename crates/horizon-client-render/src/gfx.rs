@@ -2853,7 +2853,9 @@ impl Renderer {
             (None, _) => None,
         };
         let (config, present_modes, hdr_output) = if let Some((config, caps)) = configured {
-            let hdr_output = hdr::output(&caps);
+            let hdr_output = surface
+                .as_ref()
+                .and_then(|surface| offered_output(surface, &adapter, &caps));
             if previous.is_none() {
                 log::info!(
                     "Horizon renderer: HDR output {}",
@@ -15163,7 +15165,10 @@ impl DisplayReading {
     fn os(info: &wgpu::DisplayHdrInfo) -> Self {
         #[cfg(target_os = "macos")]
         let hdr = macos_hdr(info);
-        #[cfg(not(target_os = "macos"))]
+        // iOS always answers: a screen whose headroom it doesn't report shows no HDR.
+        #[cfg(target_os = "ios")]
+        let hdr = Some(macos_hdr(info) == Some(true));
+        #[cfg(not(any(target_os = "macos", target_os = "ios")))]
         let hdr = info.coarse.and_then(|coarse| coarse.high_dynamic_range);
         Self {
             luminance: os_reported(info),
@@ -15173,12 +15178,28 @@ impl DisplayReading {
 }
 /// Potential EDR is fixed for a screen; current EDR follows brightness and must not
 /// repeatedly switch HDR output as the player adjusts the desktop's brightness.
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "ios", test))]
 fn macos_hdr(info: &wgpu::DisplayHdrInfo) -> Option<bool> {
     info.headroom?
         .potential
         .filter(|n| n.is_finite() && *n > 0.0)
         .map(|n| n > 1.0)
+}
+/// The HDR output `surface` offers on its display. iOS lists its HDR color spaces for every
+/// screen, also one with no headroom over SDR white, where the system maps the picture down
+/// to a dim, gray one: such a screen is offered none, so neither Auto nor On turns HDR on.
+fn offered_output(
+    surface: &wgpu::Surface,
+    adapter: &wgpu::Adapter,
+    caps: &wgpu::SurfaceCapabilities,
+) -> Option<hdr::Output> {
+    let output = hdr::output(caps)?;
+    if cfg!(target_os = "ios")
+        && DisplayReading::os(&surface.display_hdr_info(adapter)).hdr != Some(true)
+    {
+        return None;
+    }
+    Some(output)
 }
 /// How often [`DisplayWatch`] reads the OS's values again where no event says they changed.
 const DISPLAY_POLL: std::time::Duration = std::time::Duration::from_secs(2);
