@@ -206,7 +206,7 @@ pub(super) async fn open_adapter(
                 &device,
                 &device_lost,
                 caps,
-                window.inner_size(),
+                super::ios_surface::surface_size(&window),
                 None,
                 true,
             )
