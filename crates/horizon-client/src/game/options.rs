@@ -483,7 +483,15 @@ impl Game<'_> {
                     super::packs::open_folder(&dir);
                 }
                 Event::NativeSettings(i) => self.native_settings_refresh(i),
-                Event::NativeButton(i, b) => self.native_settings_event(i, b),
+                Event::NativeButton(i, b) => {
+                    self.native_settings_event(i, b);
+                    // The mod may now read digits or a name for the value this button
+                    // stands for; a touch screen has no other way to offer it a keyboard.
+                    if cfg!(target_os = "ios") {
+                        self.soft_keyboard.mod_page = true;
+                        self.soft_keyboard.away = false;
+                    }
+                }
                 Event::Credits => self.open_win_screen(false, super::win::Finish::Options),
                 Event::HudEditor => self.open_hud_editor(true),
                 // AccessibilityOptionsScreen's link button: ConfirmLinkScreen
