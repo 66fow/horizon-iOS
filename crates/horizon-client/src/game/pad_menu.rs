@@ -2451,8 +2451,39 @@ impl Game<'_> {
     /// that's the iPhone's own keyboard, which the field's focus brings up).
     #[cfg_attr(not(target_os = "ios"), allow(dead_code))]
     pub(super) fn touch_tapped(&mut self) {
-        if self.pad.menu.osk.is_none() && field_at(&self.pad_targets(), self.cursor) {
+        let on_field = field_at(&self.pad_targets(), self.cursor);
+        self.soft_keyboard_tapped(on_field);
+        if self.pad.menu.osk.is_none() && on_field {
             self.pad_open_keyboard();
+        }
+    }
+
+    /// The touch screen's keyboard after a tap over a menu, at `self.cursor`: on a text box
+    /// (`on_field`, or the row the caret was on) it comes back; anywhere else it goes away
+    /// while it is up, as on a phone, and the box keeps its focus and text. A mod's own
+    /// screen shows no boxes to tell apart, so a tap there brings a hidden keyboard back.
+    #[cfg_attr(not(target_os = "ios"), allow(dead_code))]
+    fn soft_keyboard_tapped(&mut self, on_field: bool) {
+        if !cfg!(target_os = "ios") {
+            return;
+        }
+        let on_row = self
+            .soft_keyboard
+            .row
+            .zip(self.gui_scale())
+            .is_some_and(|(row, batch)| {
+                let y = self.cursor.1 * batch.scale;
+                let slack = 8.0 * batch.scale;
+                y >= row[1] as f32 - slack && y <= (row[1] + row[3]) as f32 + slack
+            });
+        let up = horizon_client::screen_keyboard::height_points() > 0.0;
+        if on_field || on_row {
+            self.soft_keyboard.away = false;
+        } else if up {
+            self.soft_keyboard.away = true;
+            self.soft_keyboard.row = self.ime_area.or(self.soft_keyboard.row);
+        } else if self.screen == Screen::Mod {
+            self.soft_keyboard.away = false;
         }
     }
 
