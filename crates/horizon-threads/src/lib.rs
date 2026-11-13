@@ -7,6 +7,8 @@ pub mod boot_paint;
 pub mod heap_census;
 pub mod jobs;
 pub mod process_memory;
+#[cfg(target_os = "ios")]
+mod ios_qos;
 
 use std::sync::{
     OnceLock,
@@ -375,7 +377,12 @@ fn behind() -> bool {
     }
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "android")))]
+#[cfg(target_os = "ios")]
+fn behind() -> bool {
+    ios_qos::helpers_behind()
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "android", target_os = "ios")))]
 fn behind() -> bool {
     false
 }
