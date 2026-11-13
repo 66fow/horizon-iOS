@@ -372,6 +372,8 @@ impl Loading {
         let game_ms = game_at.elapsed().as_millis();
         game.window = Some(window);
         game.renderer = Some(renderer);
+        // The world renderer's surface takes the screen's size before the game's first frame.
+        follow_window_size(game.window.as_deref(), game.renderer.as_mut());
         game.world_renderer_ready = true;
         game.fullscreen = self.fullscreen;
         game.panorama_rotation = self.panorama_rotation;
