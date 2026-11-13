@@ -320,8 +320,17 @@ impl Game<'_> {
             }
             let g = &self.settings.horizon;
             let budgeted = g.chunk_updates > 0 || g.upload_budget_kib > 0;
+            let vertex = std::mem::size_of::<horizon_client::mesher::TerrainVertex>() as u64;
+            let burst: u64 = uploads
+                .iter()
+                .map(|(_, mesh)| (mesh.solid.len() + mesh.translucent.len()) as u64 * vertex)
+                .sum();
+            let burst_fits = AUTO_UPLOAD_BYTES == 0 || burst <= AUTO_UPLOAD_BYTES;
             // The meshes, once copied, are freed by a worker (`Streaming::free`).
-            if !budgeted && self.pending_uploads.is_empty() && uploads.len() <= AUTO_UPLOADS_AT_ONCE
+            if !budgeted
+                && burst_fits
+                && self.pending_uploads.is_empty()
+                && uploads.len() <= AUTO_UPLOADS_AT_ONCE
             {
                 horizon_client::spans::time("upload", || {
                     for (key, mesh) in &uploads {
@@ -365,8 +374,11 @@ impl Game<'_> {
                         g.chunk_updates as usize,
                         u64::from(g.upload_budget_kib) * 1024,
                     )
+                } else if arriving {
+                    // The view itself is waiting: a frame takes more of it.
+                    (0, AUTO_UPLOAD_BYTES * 4)
                 } else {
-                    (0, 0)
+                    (0, AUTO_UPLOAD_BYTES)
                 };
                 let (mut count, mut bytes) = (0, 0u64);
                 // Without the player's budgets, uploads stop once they took
