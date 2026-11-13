@@ -646,6 +646,16 @@ const AUTO_UPLOAD_TIME_ARRIVING: Duration = Duration::from_millis(3);
 const AUTO_UPLOADS_AT_ONCE: usize = 8;
 #[cfg(target_os = "ios")]
 const AUTO_UPLOADS_AT_ONCE: usize = 3;
+/// The mesh bytes a frame uploads when the player set no Chunk Updates or Upload Budget; 0 is
+/// no limit (`AUTO_UPLOAD_TIME` alone spreads a burst).
+#[cfg(not(target_os = "ios"))]
+const AUTO_UPLOAD_BYTES: u64 = 0;
+/// iOS: uploads are staged in memory the GPU shares with the game, and a dense section (a
+/// forest's canopy) is several times a plain's, so a few of them in one frame are a hitch and
+/// a memory spike the time budget doesn't see. Past this many bytes a burst waits for the next
+/// frames (one section always goes).
+#[cfg(target_os = "ios")]
+const AUTO_UPLOAD_BYTES: u64 = 1 << 20;
 /// The most changed columns far terrain waits on behind a mod's hold (`Game::lod_held`): past
 /// it, they go in as ever.
 const HELD_FAR_COLUMNS: usize = 1 << 13;
@@ -2107,6 +2117,18 @@ fn follow_keymap(event: &mut WindowEvent) {
         event.text = None;
         return;
     }
+    // Its delete key arrives with no key code (winit's deleteBackward): it's Backspace.
+    #[cfg(target_os = "ios")]
+    if let WindowEvent::KeyboardInput { event, .. } = event
+        && matches!(event.physical_key, PhysicalKey::Unidentified(_))
+        && matches!(
+            event.logical_key,
+            winit::keyboard::Key::Named(winit::keyboard::NamedKey::Backspace)
+        )
+    {
+        event.physical_key = PhysicalKey::Code(KeyCode::Backspace);
+        return;
+    }
     if let WindowEvent::KeyboardInput { event, .. } = event {
         follow_named_keymap(&event.logical_key, &mut event.physical_key);
     }
@@ -2321,6 +2343,8 @@ struct Game<'a> {
     focus_after_run: Option<bool>,
     /// Whether the window currently accepts input method events.
     ime_allowed: bool,
+    /// The touch screen's own keyboard: put away by a tap, asked for by a mod's page.
+    soft_keyboard: ime::SoftKeyboard,
     /// The candidate window's area last given to the window, in pixels.
     ime_area: Option<[i32; 4]>,
     /// When the window lost focus, while it is still without
@@ -10047,7 +10071,13 @@ impl Game<'_> {
             && let Some(text) = key_event.text.as_deref()
         {
             let text: String = text.chars().filter(|c| !c.is_control()).collect();
-            if !text.is_empty() && self.text_field_focused() && self.types_text() {
+            // ScreenEvent.CharacterTyped.Pre first, as for a key's own text: a mod's screen reads
+            // its text boxes' characters there, and a touch keyboard's all come this way.
+            if !text.is_empty()
+                && self.text_field_focused()
+                && self.types_text()
+                && let Some(text) = self.screen_text_typed(&text)
+            {
                 let _ = self.type_chars_into_screen(&text);
             }
             return;
@@ -11694,6 +11724,7 @@ impl<'a> Game<'a> {
             unclaimed_window: false,
             focus_after_run: None,
             ime_allowed: false,
+            soft_keyboard: ime::SoftKeyboard::default(),
             ime_area: None,
             focus_lost: None,
             modifiers: winit::keyboard::ModifiersState::empty(),
