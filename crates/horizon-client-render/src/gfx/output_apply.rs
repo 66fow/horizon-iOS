@@ -193,7 +193,12 @@ fn poll_display(
 /// What `surface` offers now (`None` offscreen): Vulkan's offered formats can change with
 /// desktop HDR or the window's output, and a display can offer the other encoding.
 fn offer(surface: Option<&wgpu::Surface>, adapter: &wgpu::Adapter) -> Option<Option<hdr::Output>> {
-    Some(hdr::output(&surface?.get_capabilities(adapter)))
+    let surface = surface?;
+    Some(super::offered_output(
+        surface,
+        adapter,
+        &surface.get_capabilities(adapter),
+    ))
 }
 
 /// Takes what a due poll read into `reading` and `caps`: the display's report `now`, and what
