@@ -8,7 +8,30 @@ use horizon_client::{
     preedit::{self, PreeditEvent},
 };
 
+/// The keyboard a touch screen shows over the game (iOS). Elsewhere nothing sets it.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct SoftKeyboard {
+    /// A tap away from the text box put the keyboard away; the box keeps its focus and text.
+    /// A tap on a text box, or the focus leaving, clears it.
+    pub(super) away: bool,
+    /// Where the caret was when the keyboard went away, in window pixels: a tap on that row
+    /// is a tap on the box.
+    pub(super) row: Option<[i32; 4]>,
+    /// A button was pressed on a mod's settings page, which may have made a value of its own
+    /// editable: the keyboard is offered until the page is left.
+    pub(super) mod_page: bool,
+}
+
 impl Game<'_> {
+    /// A native mod's settings page that asked for the keyboard (`SoftKeyboard::mod_page`).
+    fn mod_page_typing(&self) -> bool {
+        self.soft_keyboard.mod_page
+            && matches!(
+                self.ui.options.page(),
+                horizon_client::options_ui::Page::NativeMod(_)
+            )
+    }
+
     /// Whether a text box has focus right now (the fields `ime_commit` can fill).
     pub(super) fn text_field_focused(&mut self) -> bool {
         if self.dialog_open() {
@@ -35,7 +58,7 @@ impl Game<'_> {
                 .is_some_and(|s| s.search_focused()),
             // The language list's search, the settings search and the pack
             // screen's search (OptionsUi::typing).
-            Screen::Options => self.ui.options.typing(),
+            Screen::Options => self.ui.options.typing() || self.mod_page_typing(),
             Screen::WorldOptions => self.world_options_typing(),
             Screen::Creative => self.mod_browser_typing() || self.creative_screen.tab().search,
             Screen::BlockEditor => self.block_editor.as_ref().is_some_and(|s| s.text_focused()),
@@ -52,7 +75,15 @@ impl Game<'_> {
     pub(super) fn sync_ime(&mut self) {
         // iOS: follow the iPhone keyboard's height, for the chat to sit above it.
         horizon_client::screen_keyboard::watch();
-        let want = self.text_field_focused();
+        let focused = self.text_field_focused();
+        if !focused {
+            self.soft_keyboard.away = false;
+            self.soft_keyboard.row = None;
+        }
+        if !self.mod_page_typing() {
+            self.soft_keyboard.mod_page = false;
+        }
+        let want = focused && !self.soft_keyboard.away;
         if want != self.ime_allowed
             && let Some(window) = &self.window
         {
