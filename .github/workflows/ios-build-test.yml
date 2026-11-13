@@ -1,9 +1,9 @@
-name: iOS build (sync-upstream)
+name: iOS build (test)
 
 on:
   workflow_dispatch:
   push:
-    branches: [sync-upstream]
+    branches: [ios-build-test]
     paths-ignore:
       - packaging/ios/builder/**
       - packaging/ios/native-mods.md
@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   ipa:
-    runs-on: macos-15-intel
+    runs-on: macos-15
     permissions:
       contents: write
     timeout-minutes: 120
@@ -56,14 +56,14 @@ jobs:
           if-no-files-found: error
           
       - name: Publish the release
-        if: github.ref == 'refs/heads/sync-upstream'
+        if: github.ref == 'refs/heads/ios-build-test'
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.package.outputs.version }}
         run: |
           tag=sync-r$GITHUB_RUN_NUMBER
-          cp dist/Horizon.ipa "dist/Horizon-ios-$VERSION-sync-r$GITHUB_RUN_NUMBER.ipa"
+          cp dist/Horizon.ipa "dist/Horizon-ios-$VERSION-test-r$GITHUB_RUN_NUMBER.ipa"
           gh release create "$tag" "dist/Horizon-ios-$VERSION-sync-r$GITHUB_RUN_NUMBER.ipa" \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
-            --title "Horizon for iOS $VERSION (sync-upstream build $GITHUB_RUN_NUMBER)" \
+            --title "Horizon for iOS $VERSION (ios-build-test build $GITHUB_RUN_NUMBER)" \
             --notes-file packaging/ios/README.md
