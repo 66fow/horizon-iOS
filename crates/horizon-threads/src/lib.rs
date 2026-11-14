@@ -5,10 +5,12 @@
 #[cfg(target_os = "windows")]
 pub mod boot_paint;
 pub mod heap_census;
-pub mod jobs;
-pub mod process_memory;
+#[cfg(target_os = "ios")]
+pub mod ios_boot;
 #[cfg(target_os = "ios")]
 mod ios_qos;
+pub mod jobs;
+pub mod process_memory;
 
 use std::sync::{
     OnceLock,
@@ -40,7 +42,11 @@ pub fn worker_count() -> usize {
 /// `HORIZON_WORKER_THREADS` still overrides it.
 fn default_worker_count() -> usize {
     let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
-    if cfg!(target_os = "ios") { cores.min(4) } else { cores }
+    if cfg!(target_os = "ios") {
+        cores.min(4)
+    } else {
+        cores
+    }
 }
 
 /// `HORIZON_SERIAL_TICK=all`: every [`par_chunks_mut`] keeps its chunks on the
