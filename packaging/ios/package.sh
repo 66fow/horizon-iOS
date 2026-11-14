@@ -36,6 +36,10 @@ name=$(printf '%s' "$name" | tr -d '<>&"\\/' | cut -c1-30)
 sed -e "s/@VERSION@/$version/g" -e "s/@BUNDLE@/$bundle/g" -e "s/@SCHEME@/$scheme/g" -e "s/@NAME@/$name/g" \
   "$here/Info.plist" > "$app/Info.plist"
 plutil -lint "$app/Info.plist"
+cp "$here/../../crates/horizon-client-render/src/ios_logo.png" "$app/BootLogo.png"
+xcrun ibtool --compile "$app/LaunchScreen.storyboardc" "$here/LaunchScreen.storyboard" \
+  --target-device iphone --target-device ipad --minimum-deployment-target 15.0 \
+  --module Horizon
 printf 'APPL????' > "$app/PkgInfo"
 icon=$here/icon.png
 sips -z 120 120 "$icon" --out "$app/AppIcon60x60@2x.png" >/dev/null
