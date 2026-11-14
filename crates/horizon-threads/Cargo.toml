@@ -16,6 +16,12 @@ libc = "0.2"
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_Console", "Win32_System_IO", "Win32_System_ProcessStatus", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_System_WindowsProgramming", "Win32_UI_WindowsAndMessaging"] }
 
+[target.'cfg(target_os = "ios")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSEnumerator", "NSString", "NSBundle"] }
+objc2-ui-kit = { version = "0.3", default-features = false, features = ["std", "UIApplication", "UIResponder", "UIWindow", "UIView", "UIViewController", "UIStoryboard", "UILabel", "objc2-core-foundation"] }
+objc2-quartz-core = { version = "0.3", default-features = false, features = ["std", "CATransaction"] }
+
 [features]
 # Counts live heap bytes by startup step and thread (`CensusAllocator`); for measuring only.
 alloc-census = []
