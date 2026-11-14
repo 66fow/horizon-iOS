@@ -43,7 +43,8 @@ jobs:
           mkdir -p mods
           ids=""
 
-          # Checks mods/<id>; writes horizon-native.json only when the mod has none.
+          # Checks mods/<id>; writes horizon-native.json only when the mod has none,
+          # and aligns "mixins" revision across all mods to avoid GitHub API rate limits.
           finish() {
             local id="$1" dir="mods/$1"
             find "$dir/mixins" -name horizon-mixin.toml 2>/dev/null | grep -q . || {
@@ -57,6 +58,8 @@ jobs:
               version=$(sed -n 's/^version *= *"\(.*\)"/\1/p' "$toml" | head -1)
               [[ "$version" =~ ^[0-9A-Za-z.+-]{1,32}$ ]] || { echo "::error::$id: version \"$version\" is not a plain version like 0.1.0"; exit 1; }
               ID="$id" V="$version" R="$revision" M="$mixins" python3 -c 'import json,os; print(json.dumps({"schema": 1, "id": os.environ["ID"], "version": os.environ["V"], "game": "26.3", "horizon": os.environ["R"], "mixins": os.environ["M"]}, indent=1))' > "$dir/horizon-native.json"
+            else
+              M="$mixins" python3 -c 'import json,os,sys; p=sys.argv[1]; d=json.load(open(p)); d["mixins"]=os.environ["M"]; json.dump(d,open(p,"w"),indent=1)' "$dir/horizon-native.json"
             fi
             local shown
             shown=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get("version","?"), "hooks=" + str(d.get("hooks","-")))' "$dir/horizon-native.json")
@@ -117,6 +120,8 @@ jobs:
         env:
           HORIZON_LAUNCHER_HOME: ${{ runner.temp }}/launcher-home
           HORIZON_LAUNCHER_NO_SELF_UPDATE: "1"
+          GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           revision=$(git -C horizon rev-parse HEAD)
           echo "$revision" > horizon/.horizon-revision
