@@ -125,7 +125,7 @@ jobs:
           ok=""; skipped=""
           for d in mods/*/; do
             id=$(basename "$d")
-            rm -rf probe-mods probe-out
+            rm -rf probe-mods probe-out probe.json probe.err "$HORIZON_LAUNCHER_HOME/native/build.log"
             mkdir probe-mods
             cp -R "$d" "probe-mods/$id"
             if horizon/launcher/target/release/horizon-launcher native-stage "$PWD/probe-mods" \
@@ -136,12 +136,29 @@ jobs:
             else
               skipped="$skipped $id"
               echo "::warning::SKIPPED $id: it does not apply to this branch's source"
-              jq -r '"    \(.code) - \(.message) (\(.target // ""))"' probe.json 2>/dev/null \
-                || { head -c 600 probe.json; tail -n 8 probe.err; }
+              if [ -s probe.json ]; then
+                if jq -e 'type == "object" and (.code != null or .message != null)' probe.json >/dev/null 2>&1; then
+                  jq -r '"    [json] \(.code // "ERROR") - \(.message // "")\(if .target then " (\(.target))" else "" end)"' probe.json
+                elif jq -e . probe.json >/dev/null 2>&1; then
+                  jq . probe.json | head -n 40 | sed 's/^/    [json] /'
+                else
+                  head -n 40 probe.json | sed 's/^/    [stdout] /'
+                fi
+              fi
+              if [ -s probe.err ]; then
+                tail -n 30 probe.err | sed 's/^/    [stderr] /'
+              fi
+              if [ -s "$HORIZON_LAUNCHER_HOME/native/build.log" ]; then
+                echo "    [build.log] Last 40 lines:"
+                tail -n 40 "$HORIZON_LAUNCHER_HOME/native/build.log" | sed 's/^/      /'
+              fi
+              if [ ! -s probe.json ] && [ ! -s probe.err ] && [ ! -s "$HORIZON_LAUNCHER_HOME/native/build.log" ]; then
+                echo "    (No detailed error log emitted by horizon-launcher)"
+              fi
               rm -rf "mods/$id"
             fi
           done
-          rm -rf probe-mods probe-out
+          rm -rf probe-mods probe-out probe.json probe.err
           echo "mods_ok=${ok# }" >> "$GITHUB_OUTPUT"
           echo "skipped=${skipped# }" >> "$GITHUB_OUTPUT"
           if [ -z "${ok// /}" ]; then echo "::error::none of the mods applies to this branch's source"; exit 1; fi
