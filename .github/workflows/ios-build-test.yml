@@ -5,6 +5,7 @@ on:
   push:
     branches: [ios-build-test]
     paths-ignore:
+      - mod-list/**
       - packaging/ios/builder/**
       - packaging/ios/native-mods.md
       - .github/workflows/ios-mods-*.yml
