@@ -151,6 +151,8 @@ impl ParticleAsyncCuller {
         let thread = std::thread::Builder::new()
             .name("particle-culling".into())
             .spawn(move || {
+                #[cfg(target_os = "ios")]
+                horizon_threads::behind_server();
                 while let Ok(job) = job_rx.recv() {
                     if result_tx.send(cull_job(job)).is_err() {
                         break;
