@@ -158,6 +158,7 @@ struct CachedChunkValidation {
 /// sections. Keep their validity in sorted vectors and stamp successful checks
 /// with an epoch so a stable frame can validate the same certificate in O(1).
 struct FrameProofValidationCache {
+    pending_sections: Vec<SectionKey>,
     chunks: Vec<CachedChunkValidation>,
     sections: Vec<(SectionKey, bool)>,
     valid_epoch: u64,
@@ -170,6 +171,7 @@ struct FrameProofValidationCache {
 impl Default for FrameProofValidationCache {
     fn default() -> Self {
         Self {
+            pending_sections: Vec::new(),
             chunks: Vec::new(),
             sections: Vec::new(),
             valid_epoch: 1,
@@ -205,6 +207,12 @@ impl FrameProofValidationCache {
             return;
         }
         self.frame_verified = true;
+        // Mesh uploads do not change while drawing; index once instead of scanning per proof.
+        self.pending_sections.clear();
+        self.pending_sections
+            .extend(pending_uploads.iter().map(|(key, _)| *key));
+        self.pending_sections.sort_unstable();
+        self.pending_sections.dedup();
 
         let streaming_sequence = streaming.sequence();
         let renderer_sections = renderer.map_or(0, Renderer::section_count);
@@ -252,7 +260,7 @@ impl FrameProofValidationCache {
                 || !renderer.is_some_and(|renderer| renderer.has_section(key))
                 || world.dirty_sections.contains(&key)
                 || streaming.is_meshing(key)
-                || pending_uploads.iter().any(|(pending, _)| *pending == key)
+                || self.pending_sections.binary_search(&key).is_ok()
             {
                 invalid = true;
                 break;
@@ -305,7 +313,6 @@ impl FrameProofValidationCache {
         world: &World,
         renderer: Option<&Renderer>,
         streaming: &Streaming,
-        pending_uploads: &[((i32, i32, i32), SectionMesh)],
         counts: &mut ProofValidationCounts,
     ) -> bool {
         match self.sections.binary_search_by_key(&key, |(key, _)| *key) {
@@ -318,7 +325,7 @@ impl FrameProofValidationCache {
                 let current = renderer.is_some_and(|renderer| renderer.has_section(key))
                     && !world.dirty_sections.contains(&key)
                     && !streaming.is_meshing(key)
-                    && !pending_uploads.iter().any(|(pending, _)| *pending == key);
+                    && self.pending_sections.binary_search(&key).is_err();
                 self.sections.insert(index, (key, current));
                 current
             }
@@ -813,6 +820,8 @@ impl AsyncOcclusionCuller {
         let thread = std::thread::Builder::new()
             .name("world-occlusion-culling".into())
             .spawn(move || {
+                #[cfg(target_os = "ios")]
+                horizon_threads::behind_server();
                 let mut scratch = PlaneWorkerScratch::default();
                 while let Ok(job) = plane_rx.recv() {
                     if result_tx
@@ -827,6 +836,8 @@ impl AsyncOcclusionCuller {
         let ray_thread = std::thread::Builder::new()
             .name("entity-ray-cull".into())
             .spawn(move || {
+                #[cfg(target_os = "ios")]
+                horizon_threads::behind_server();
                 let mut scratch = RayWorkerScratch::default();
                 while let Ok(mut job) = job_rx.recv() {
                     filter_rays(&mut job, &worker_generation, &mut scratch);
@@ -1942,14 +1953,7 @@ fn proof_is_current(
         }
     }
     for &section in &proof.sections {
-        if !cache.section_is_current(
-            section,
-            world,
-            renderer,
-            streaming,
-            pending_uploads,
-            &mut counts,
-        ) {
+        if !cache.section_is_current(section, world, renderer, streaming, &mut counts) {
             proof.validated_epoch.set(0);
             return (false, counts);
         }
