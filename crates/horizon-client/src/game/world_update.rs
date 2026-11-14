@@ -2,6 +2,8 @@
 //! streamed in and the meshes handed to the renderer, the columns that unload (their entities
 //! and block entities saved out first); and far terrain (`prepare_lod`, `clear_lod`).
 use super::*;
+#[path = "upload_budget.rs"]
+mod upload_budget;
 
 impl Game<'_> {
     pub(super) fn clear_lod(&mut self) {
@@ -327,7 +329,8 @@ impl Game<'_> {
                 .sum();
             let burst_fits = AUTO_UPLOAD_BYTES == 0 || burst <= AUTO_UPLOAD_BYTES;
             // The meshes, once copied, are freed by a worker (`Streaming::free`).
-            if !budgeted
+            if !cfg!(target_os = "ios")
+                && !budgeted
                 && burst_fits
                 && self.pending_uploads.is_empty()
                 && uploads.len() <= AUTO_UPLOADS_AT_ONCE
@@ -374,33 +377,36 @@ impl Game<'_> {
                         g.chunk_updates as usize,
                         u64::from(g.upload_budget_kib) * 1024,
                     )
-                } else if arriving {
-                    // The view itself is waiting: a frame takes more of it.
+                } else if arriving && !cfg!(target_os = "ios") {
+                    // Desktop can fill a new view faster; mobile shares upload bandwidth with drawing.
                     (0, AUTO_UPLOAD_BYTES * 4)
                 } else {
                     (0, AUTO_UPLOAD_BYTES)
                 };
                 let (mut count, mut bytes) = (0, 0u64);
-                // Without the player's budgets, uploads stop once they took
-                // AUTO_UPLOAD_TIME of this frame (at least one goes): a burst of
-                // finished meshes spreads over frames, nearest first.
-                let auto = !budgeted;
-                let auto_time = if arriving {
+                // iOS also keeps the time cap alongside explicit count/byte limits:
+                // CPU encoding time alone cannot account for shared GPU bandwidth.
+                // At least one section goes so an oversized mesh cannot starve.
+                let auto = !budgeted || cfg!(target_os = "ios");
+                let auto_time = if arriving && !cfg!(target_os = "ios") {
                     AUTO_UPLOAD_TIME_ARRIVING
                 } else {
                     AUTO_UPLOAD_TIME
                 };
                 let started = Instant::now();
                 while let Some((_, mesh)) = pending.last() {
-                    if auto && count > 0 && started.elapsed() >= auto_time {
-                        break;
-                    }
                     let size = ((mesh.solid.len() + mesh.translucent.len())
                         * std::mem::size_of::<horizon_client::mesher::TerrainVertex>())
                         as u64;
-                    if (limit > 0 && count >= limit)
-                        || (budget > 0 && bytes > 0 && bytes + size > budget)
-                    {
+                    if !upload_budget::allows(
+                        count,
+                        bytes,
+                        size,
+                        limit,
+                        budget,
+                        auto.then_some(auto_time),
+                        started.elapsed(),
+                    ) {
                         break;
                     }
                     let (key, mesh) = pending.pop().expect("checked above");
