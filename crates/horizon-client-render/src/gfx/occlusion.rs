@@ -556,6 +556,8 @@ impl Worker {
         std::thread::Builder::new()
             .name("occlusion".into())
             .spawn(move || {
+                #[cfg(target_os = "ios")]
+                horizon_threads::behind_server();
                 let mut columns = Columns::new(min_y, sections);
                 let (mut vis, mut queue) = (Vec::new(), VecDeque::new());
                 while let Ok(mut job) = job_rx.recv() {
