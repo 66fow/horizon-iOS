@@ -57,9 +57,8 @@
 		<integer>1</integer>
 		<integer>2</integer>
 	</array>
-	<!-- A launch screen, even empty, gives the app the whole screen instead of a letterbox. -->
-	<key>UILaunchScreen</key>
-	<dict/>
+	<key>UILaunchStoryboardName</key>
+	<string>LaunchScreen</string>
 	<key>UIRequiresFullScreen</key>
 	<true/>
 	<key>UIStatusBarHidden</key>
