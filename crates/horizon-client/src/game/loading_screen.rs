@@ -120,6 +120,8 @@ impl Loading {
         horizon_client::window::settle_created_fullscreen(&window, fullscreen);
         drop(window_step);
         horizon_client::telemetry::note_display(&window);
+        #[cfg(target_os = "ios")]
+        horizon_threads::ios_boot::show(&horizon_client::logging::recent_lines());
         // The renderer takes seconds to build and winit's window sits white
         // until the first frame presents, so paint the boot screen on it and
         // keep repainting it as the console's lines arrive; the wgpu frames
@@ -281,11 +283,15 @@ impl Loading {
         );
         if let Some(renderer) = &mut self.renderer {
             match renderer.render(&frame) {
-                Ok(true) if self.gui.is_some() && self.menu.pending.is_none() => {
-                    self.title_drawn = true;
-                    self.menu.perf.title_shown()
+                Ok(true) => {
+                    #[cfg(target_os = "ios")]
+                    horizon_threads::ios_boot::hide();
+                    if self.gui.is_some() && self.menu.pending.is_none() {
+                        self.title_drawn = true;
+                        self.menu.perf.title_shown();
+                    }
                 }
-                Ok(_) => {}
+                Ok(false) => {}
                 Err(e) => log::warn!("Horizon: loading screen frame failed: {e}"),
             }
         }
