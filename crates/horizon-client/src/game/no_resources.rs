@@ -25,7 +25,7 @@ pub(super) fn show(looked_in: &std::path::Path, settings: &Settings) -> Result<(
         window: None,
         renderer: None,
         gui: UiResources {
-            atlas: HudAtlas::build(looked_in)?,
+            atlas: HudAtlas::boot(),
             panorama: Arc::new(horizon_client::gfx::panorama::Faces::colour([0; 4])),
         },
         screen: if super::touch::TOUCH_CONTROLS {
@@ -44,7 +44,7 @@ pub(super) fn show(looked_in: &std::path::Path, settings: &Settings) -> Result<(
         looked_in: looked_in.to_path_buf(),
     };
     horizon_client::hud::GUI_SCALE.store(settings.gui_scale, Ordering::Relaxed);
-    EventLoop::new()?.run_app(&mut app)?;
+    EventLoop::new()?.run_app(&mut super::loading_screen::BigStack(&mut app))?;
     app.error.map_or(Ok(()), Err)
 }
 
@@ -79,7 +79,11 @@ impl Missing {
             return;
         };
         match renderer.render(&loading_frame(&batch)) {
-            Ok(true) => return,
+            Ok(true) => {
+                #[cfg(target_os = "ios")]
+                horizon_threads::ios_boot::hide();
+                return;
+            }
             Ok(false) => {}
             Err(e) => log::warn!("Horizon: frame failed: {e}"),
         }
@@ -126,6 +130,8 @@ impl ApplicationHandler for Missing {
             .map_err(Into::into)
             .and_then(|window| {
                 let window = Arc::new(window);
+                #[cfg(target_os = "ios")]
+                horizon_threads::ios_boot::show(&horizon_client::logging::recent_lines());
                 let renderer = loading_renderer(
                     window.clone(),
                     false,
