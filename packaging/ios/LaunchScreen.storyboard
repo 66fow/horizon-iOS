@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<document type="com.apple.InterfaceBuilder3.CocoaTouch.Storyboard.XIB" version="3.0" toolsVersion="23501" targetRuntime="iOS.CocoaTouch" propertyAccessControl="none" useAutolayout="YES" launchScreen="YES" useTraitCollections="YES" useSafeAreas="YES" colorMatched="YES" initialViewController="boot-controller">
+    <device id="retina6_1" orientation="landscape" appearance="dark"/>
+    <dependencies>
+        <deployment identifier="iOS"/>
+        <plugIn identifier="com.apple.InterfaceBuilder.IBCocoaTouchPlugin" version="23502"/>
+        <capability name="Safe area layout guides" minToolsVersion="9.0"/>
+        <capability name="documents saved in the Xcode 8 format" minToolsVersion="8.0"/>
+    </dependencies>
+    <scenes>
+        <scene sceneID="boot-scene">
+            <objects>
+                <viewController id="boot-controller" sceneMemberID="viewController">
+                    <view key="view" contentMode="scaleToFill" id="boot-view">
+                        <rect key="frame" x="0.0" y="0.0" width="896" height="414"/>
+                        <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
+                        <subviews>
+                            <imageView userInteractionEnabled="NO" contentMode="scaleAspectFit" image="BootLogo.png" translatesAutoresizingMaskIntoConstraints="NO" id="boot-logo"/>
+                            <label opaque="NO" userInteractionEnabled="NO" contentMode="left" text="Horizon iOS" textAlignment="center" translatesAutoresizingMaskIntoConstraints="NO" id="boot-title">
+                                <fontDescription key="fontDescription" type="system" weight="semibold" pointSize="34"/>
+                                <color key="textColor" white="1" alpha="1" colorSpace="custom" customColorSpace="genericGamma22GrayColorSpace"/>
+                            </label>
+                            <label opaque="NO" userInteractionEnabled="NO" contentMode="left" text="…" lineBreakMode="byTruncatingHead" numberOfLines="4" tag="1001" translatesAutoresizingMaskIntoConstraints="NO" id="boot-log">
+                                <fontDescription key="fontDescription" name="Menlo-Regular" family="Menlo" pointSize="11"/>
+                                <color key="textColor" red="0.6078431373" green="0.6313725490" blue="0.6509803922" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
+                            </label>
+                        </subviews>
+                        <viewLayoutGuide key="safeArea" id="boot-safe"/>
+                        <color key="backgroundColor" red="0.0862745098" green="0.0941176471" blue="0.1215686275" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
+                        <constraints>
+                            <constraint firstItem="boot-logo" firstAttribute="centerX" secondItem="boot-view" secondAttribute="centerX" id="logo-x"/>
+                            <constraint firstItem="boot-logo" firstAttribute="centerY" secondItem="boot-view" secondAttribute="centerY" multiplier="0.84" id="logo-y"/>
+                            <constraint firstItem="boot-logo" firstAttribute="width" secondItem="boot-view" secondAttribute="height" multiplier="0.8" id="logo-width"/>
+                            <constraint firstItem="boot-logo" firstAttribute="height" secondItem="boot-view" secondAttribute="height" multiplier="0.5" id="logo-height"/>
+                            <constraint firstItem="boot-title" firstAttribute="centerX" secondItem="boot-view" secondAttribute="centerX" id="title-x"/>
+                            <constraint firstItem="boot-title" firstAttribute="top" secondItem="boot-logo" secondAttribute="bottom" constant="8" id="title-y"/>
+                            <constraint firstItem="boot-log" firstAttribute="leading" secondItem="boot-safe" secondAttribute="leading" constant="16" id="log-left"/>
+                            <constraint firstItem="boot-log" firstAttribute="bottom" secondItem="boot-safe" secondAttribute="bottom" constant="-12" id="log-bottom"/>
+                            <constraint firstItem="boot-log" firstAttribute="width" secondItem="boot-safe" secondAttribute="width" multiplier="0.5" id="log-width"/>
+                        </constraints>
+                    </view>
+                </viewController>
+                <placeholder placeholderIdentifier="IBFirstResponder" id="boot-responder" userLabel="First Responder" sceneMemberID="firstResponder"/>
+            </objects>
+        </scene>
+    </scenes>
+    <resources>
+        <image name="BootLogo.png" width="1024" height="640"/>
+    </resources>
+</document>
