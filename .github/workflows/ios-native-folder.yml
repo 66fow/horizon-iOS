@@ -1,9 +1,9 @@
-# Builds Horizon for iOS with the native mods in the `mod-list/` folder of the ios-build branch.
+# Builds Horizon for iOS with the native mods in the `mod-list/` folder of the bedrock-style branch.
 # Put one `<id>.hnmod` per mod there (a zip with the `mixins/` folder, optionally horizon-native.json),
 # or a plain folder `mod-list/<id>/mixins/<id>/horizon-mixin.toml`. Then run
-# Actions -> "iOS build with mods from mod-list folder". Same staging and iOS build as
+# Actions -> "Bedrock Style (with mods from mod-list)". Same staging and iOS build as
 # ios-native-build.yml, but the mods come from the repo, not from the registry.
-name: iOS build with mods from mod-list folder
+name: Bedrock Style (with mods from mod-list)
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ios-native-folder
+  group: ios-native-folder-bedrock
   cancel-in-progress: true
 
 jobs:
@@ -28,7 +28,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ios-build-test
+          ref: bedrock-style
           path: horizon
           persist-credentials: false
 
@@ -37,7 +37,7 @@ jobs:
         run: |
           set -euo pipefail
           src="$PWD/horizon/mod-list"
-          [ -d "$src" ] || { echo "::error::the folder mod-list/ is not on the ios-build branch"; exit 1; }
+          [ -d "$src" ] || { echo "::error::the folder mod-list/ is not on the bedrock-style branch"; exit 1; }
           revision=$(git -C horizon rev-parse HEAD)
           mixins=$(git ls-remote https://github.com/horizon-rust/horizon-mixins HEAD | cut -f1)
           mkdir -p mods
@@ -111,7 +111,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: horizon/launcher
-          key: native-stage
+          key: native-stage-bedrock
       - name: Build the launcher's command line
         run: cargo build --release --manifest-path horizon/launcher/Cargo.toml --bin horizon-launcher
 
@@ -185,7 +185,7 @@ jobs:
           ls -lh staged.tar.gz
       - uses: actions/upload-artifact@v4
         with:
-          name: staged-folder
+          name: staged-folder-bedrock
           path: |
             staged.tar.gz
             staged.json
@@ -200,12 +200,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ios-build-test
+          ref: bedrock-style
           path: horizon
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
-          name: staged-folder
+          name: staged-folder-bedrock
       - name: Unpack the staged source
         run: mkdir ws && tar -xzf staged.tar.gz -C ws
       - uses: dtolnay/rust-toolchain@stable
@@ -214,7 +214,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: ws
-          key: ios-native
+          key: ios-native-bedrock
       - name: Build
         working-directory: ws
         env:
@@ -232,7 +232,7 @@ jobs:
           
       - uses: actions/upload-artifact@v4
         with:
-          name: Horizon-ios-folder-mods
+          name: Horizon-ios-bedrock-mods
           path: dist/Horizon.ipa
           if-no-files-found: error
           
@@ -241,9 +241,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.package.outputs.version }}
         run: |
-          tag=modded-r$GITHUB_RUN_NUMBER
-          cp dist/Horizon.ipa "dist/Horizon-ios-$VERSION-modded-r$GITHUB_RUN_NUMBER.ipa"
-          gh release create "$tag" "dist/Horizon-ios-$VERSION-modded-r$GITHUB_RUN_NUMBER.ipa" \
-            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
-            --title "Horizon for iOS $VERSION (Modded build $GITHUB_RUN_NUMBER)" \
-            --notes "Custom iOS build with native mods from mod-list/ folder."
+          tag=bedrock-modded-r$GITHUB_RUN_NUMBER
+          cp dist/Horizon.ipa "dist/Horizon-ios-$VERSION-bedrock-modded-r$GITHUB_RUN_NUMBER.ipa"
+          gh release create "$tag" "dist/Horizon-ios-$VERSION-bedrock-modded-r$GITHUB_RUN_NUMBER.ipa" \
+            --repo "$GITHUB_REPOSITORY" --target bedrock-style --prerelease \
+            --title "Horizon for iOS $VERSION (Bedrock Style Modded build $GITHUB_RUN_NUMBER)" \
+            --notes "Custom Bedrock Style iOS build with native mods from mod-list/ folder."
