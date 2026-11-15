@@ -1451,6 +1451,15 @@ impl HudAtlas {
                 images.push(image);
             }
         }
+        // Embedded touch art also belongs in the title/editor atlas. A pack's
+        // Starling sprites take precedence, just as controller artwork does.
+        for (name, png) in crate::touch_sprites::SPRITES {
+            let key = format!("starling:gui/sprites/touch/{name}");
+            if !images.iter().any(|i| i.0 == key) {
+                let (width, height, rgba) = decode_bytes(png)?;
+                images.push((key, width, height, rgba));
+            }
+        }
         if full {
             // Official Recipes artwork from Just Enough Items, under MIT.
             for (name, png) in crate::jei_sprites::SPRITES {
