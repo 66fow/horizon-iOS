@@ -1,9 +1,9 @@
-name: iOS build (test)
+name: Bedrock Style
 
 on:
   workflow_dispatch:
   push:
-    branches: [ios-build-test]
+    branches: [bedrock-style]
     paths-ignore:
       - mod-list/**
       - packaging/ios/builder/**
@@ -35,7 +35,7 @@ jobs:
           
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ios
+          key: ios-bedrock
           
       - name: Build
         env:
@@ -52,19 +52,19 @@ jobs:
           
       - uses: actions/upload-artifact@v4
         with:
-          name: Horizon-ios
+          name: Horizon-ios-bedrock
           path: dist/Horizon.ipa
           if-no-files-found: error
           
       - name: Publish the release
-        if: github.ref == 'refs/heads/ios-build-test'
+        if: github.ref == 'refs/heads/bedrock-style'
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.package.outputs.version }}
         run: |
-          tag=test-r$GITHUB_RUN_NUMBER
-          cp dist/Horizon.ipa "dist/Horizon-ios-$VERSION-test-r$GITHUB_RUN_NUMBER.ipa"
-          gh release create "$tag" "dist/Horizon-ios-$VERSION-test-r$GITHUB_RUN_NUMBER.ipa" \
+          tag=bedrock-r$GITHUB_RUN_NUMBER
+          cp dist/Horizon.ipa "dist/Horizon-ios-$VERSION-bedrock-r$GITHUB_RUN_NUMBER.ipa"
+          gh release create "$tag" "dist/Horizon-ios-$VERSION-bedrock-r$GITHUB_RUN_NUMBER.ipa" \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
-            --title "Horizon for iOS $VERSION (ios-build-test build $GITHUB_RUN_NUMBER)" \
+            --title "Horizon for iOS $VERSION (bedrock-style build $GITHUB_RUN_NUMBER)" \
             --notes-file packaging/ios/README.md
