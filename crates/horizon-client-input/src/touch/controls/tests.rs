@@ -835,7 +835,7 @@ fn the_picker_pages_stay_in_the_safe_area_and_page_buttons_turn_them() {
     // Every key is on some page, once.
     let mut seen = Vec::new();
     for page in 0..first.pages {
-        for (hit, _) in Picker { id: 0, page }.grid(&l).cells {
+        for (hit, _) in (Picker { id: 0, page }).grid(&l).cells {
             if let PickerHit::Key(name) = hit {
                 seen.push(name);
             }
@@ -861,7 +861,10 @@ fn the_picker_pages_stay_in_the_safe_area_and_page_buttons_turn_them() {
 #[test]
 fn every_key_the_picker_offers_is_a_key_the_game_knows() {
     for name in PICKER_KEYS {
-        assert!(crate::keybinds::key_code(name).is_some(), "{name}");
+        assert!(Bind::parse(name).is_some(), "{name}");
+        for key in name.split('+') {
+            assert!(crate::keybinds::key_code(key).is_some(), "{key}");
+        }
     }
     let mut sorted = PICKER_KEYS.to_vec();
     sorted.sort_unstable();
