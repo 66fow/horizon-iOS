@@ -96,8 +96,8 @@ impl TouchButton {
 pub enum Bind {
     /// Nothing yet: it waits for a key.
     Unbound,
-    /// A keyboard key (`key.keyboard.f7`), pressed as the keyboard's own: a
-    /// mod that has a keybind on it hears it.
+    /// A keyboard key or a `+`-separated chord of keyboard keys, pressed as
+    /// the keyboard's own: a mod that has a keybind on it hears it.
     Key(String),
     /// What a built-in button does: a copy of it.
     Button(TouchButton),
@@ -120,7 +120,11 @@ impl Bind {
         if let Some(name) = text.strip_prefix("button:") {
             return TouchButton::from_key(name).map(Self::Button);
         }
-        crate::keybinds::key_code(text).map(|_| Self::Key(text.to_owned()))
+        let keys: Vec<&str> = text.split('+').map(str::trim).collect();
+        if keys.len() > 4 || keys.iter().any(|key| crate::keybinds::key_code(key).is_none()) {
+            return None;
+        }
+        Some(Self::Key(keys.join("+")))
     }
 }
 
@@ -860,6 +864,16 @@ pub const PICKER_KEYS: &[&str] = &[
     "key.keyboard.f1",
     "key.keyboard.f2",
     "key.keyboard.f3",
+    "key.keyboard.f3+key.keyboard.b",
+    "key.keyboard.f3+key.keyboard.g",
+    "key.keyboard.f3+key.keyboard.h",
+    "key.keyboard.f3+key.keyboard.a",
+    "key.keyboard.f3+key.keyboard.t",
+    "key.keyboard.f3+key.keyboard.d",
+    "key.keyboard.f3+key.keyboard.n",
+    "key.keyboard.f3+key.keyboard.p",
+    "key.keyboard.f3+key.keyboard.q",
+    "key.keyboard.f3+key.keyboard.f4",
     "key.keyboard.f4",
     "key.keyboard.f5",
     "key.keyboard.f6",
@@ -1577,7 +1591,9 @@ impl TouchControls {
         for id in down {
             match self.settings.custom(id).map(|c| &c.bind) {
                 Some(Bind::Button(b)) => held.push(*b),
-                Some(Bind::Key(name)) => keys.push(name.clone()),
+                Some(Bind::Key(name)) => {
+                    keys.extend(name.split('+').map(|key| key.trim().to_owned()));
+                }
                 _ => {}
             }
         }
