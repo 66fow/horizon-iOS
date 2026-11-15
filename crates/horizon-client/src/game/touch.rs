@@ -24,17 +24,18 @@ use winit::event::{Touch, TouchPhase};
 const LOOK_SPEED: f64 = 2.0;
 
 /// Colours, as the HUD's `0xAARRGGBB`, at full opacity.
-const FACE: u32 = 0x6000_0000;
-const FACE_PRESSED: u32 = 0xa0ff_ffff;
-const EDGE: u32 = 0xa0ff_ffff;
+const FACE: u32 = 0xff80_8080;
+const FACE_PRESSED: u32 = 0xff70_7070;
+const EDGE: u32 = 0xffd0_d0d0;
 const INK: u32 = 0xffff_ffff;
-const INK_PRESSED: u32 = 0xff20_2020;
+const BUTTON_INK: u32 = 0xff00_0000;
+const INK_PRESSED: u32 = 0xffe6_e6e6;
 const SELECTED: u32 = 0xffff_e040;
 const HIDDEN_EDGE: u32 = 0xc0ff_5050;
 /// Over the screen the editor was opened from.
 const SHADE: u32 = 0xc000_0000;
-const MENU_FACE: u32 = 0xf020_2020;
-const MENU_OFF: u32 = 0x80ff_ffff;
+const MENU_FACE: u32 = 0xffc6_c6c6;
+const MENU_OFF: u32 = 0xff60_6060;
 
 #[cfg_attr(not(target_os = "ios"), allow(dead_code))]
 impl Game<'_> {
@@ -150,19 +151,9 @@ impl Game<'_> {
     pub(super) fn draw_touch_close(&self, batch: &mut HudBatch) {
         if let Some(a) = self.touch_close_button(batch) {
             let atlas = &self.gui.atlas;
-            batch.fill(atlas, a.x, a.y, a.w, a.h, 0xc020_2020);
-            outline(batch, atlas, a, EDGE);
+            bevel(batch, atlas, a, MENU_FACE, false);
             let label = horizon_client::lang::get("horizon.touch.escape");
-            let label = fit(atlas, &label, a.w - 4.0);
-            let width = HudBatch::text_width(atlas, &label);
-            batch.text(
-                atlas,
-                &label,
-                a.x + (a.w - width) / 2.0,
-                a.y + (a.h - 8.0) / 2.0,
-                INK,
-                true,
-            );
+            centred_label(batch, atlas, &label, a, BUTTON_INK);
         }
     }
 
@@ -303,39 +294,21 @@ impl Game<'_> {
         let frame = self.pad.touch.frame(&layout, Instant::now());
         self.touch_sneak(frame.held.contains(&TouchButton::Sneak));
         // The player's own buttons press their keys as the keyboard does.
-        let keys: Vec<KeyCode> = frame
+        let mut keys: Vec<KeyCode> = frame
             .keys
             .iter()
             .filter_map(|name| horizon_client::keybinds::key_code(name))
             .collect();
+        // Built-in and custom F3 share ownership: lifting one must not release
+        // another finger's modifier, and menu/editor cleanup releases both.
+        if frame.held.contains(&TouchButton::Debug) {
+            keys.push(KeyCode::F3);
+        }
         self.touch_keys(&keys);
         let mut state = PadState {
             left: frame.stick,
             ..PadState::default()
         };
-        // F3 is the keyboard's: pressed and released as the key.
-        let debug = frame.held.contains(&TouchButton::Debug);
-        if debug != self.pad.touch_debug {
-            self.pad.touch_debug = debug;
-            // KeyboardHandler.keyPress: F3 is a debug key first (its release toggles the
-            // overlay), the way the keyboard's F3 goes in window_event.
-            use horizon_client::debug_keys::KeyAction;
-            let action = if debug {
-                KeyAction::Press
-            } else {
-                KeyAction::Release
-            };
-            if debug {
-                self.physical_keys.insert(KeyCode::F3);
-            } else {
-                self.physical_keys.remove(&KeyCode::F3);
-            }
-            if !self.debug_key(KeyCode::F3, action)
-                && let Err(e) = self.mapped_key_event(KeyCode::F3, debug, false)
-            {
-                log::warn!("Horizon: touch F3: {e}");
-            }
-        }
         for held in frame.held {
             // Sneak went to the game above. With Toggle sprint the game flips
             // sprinting on each press, so a stick pushed forward again must
@@ -384,18 +357,40 @@ impl Game<'_> {
         if wanted.is_empty() && self.pad.touch_keys.is_empty() {
             return;
         }
+        let modifier = horizon_client::keybinds::key_code(
+            self.settings.keys.get("key.debug.modifier"),
+        );
+        let mut wanted = wanted.to_vec();
+        wanted.sort_by_key(|key| {
+            let priority = if matches!(
+                key,
+                KeyCode::ShiftLeft | KeyCode::ShiftRight
+                    | KeyCode::ControlLeft | KeyCode::ControlRight
+                    | KeyCode::AltLeft | KeyCode::AltRight
+                    | KeyCode::SuperLeft | KeyCode::SuperRight
+            ) {
+                0
+            } else if Some(*key) == modifier || *key == KeyCode::F3 {
+                1
+            } else {
+                2
+            };
+            (priority, *key)
+        });
+        wanted.dedup();
         let down = std::mem::take(&mut self.pad.touch_keys);
-        for key in &down {
+        // Modifiers go down first and up last, regardless of finger/hash-map order.
+        for key in down.iter().rev() {
             if !wanted.contains(key) {
                 self.touch_key(*key, false);
             }
         }
-        for key in wanted {
+        for key in &wanted {
             if !down.contains(key) {
                 self.touch_key(*key, true);
             }
         }
-        self.pad.touch_keys = wanted.to_vec();
+        self.pad.touch_keys = wanted;
     }
 
     /// A key a button of the player's presses or lets go of, the way the
@@ -406,6 +401,22 @@ impl Game<'_> {
             self.physical_keys.insert(key);
         } else {
             self.physical_keys.remove(&key);
+        }
+        use horizon_client::debug_keys::KeyAction;
+        if down {
+            if horizon_client::keybinds::key_name(key)
+                == Some(self.settings.keys.get("key.fullscreen"))
+            {
+                self.toggle_fullscreen();
+                return;
+            }
+            if self.screenshot_shortcut(key, false) {
+                return;
+            }
+        }
+        let action = if down { KeyAction::Press } else { KeyAction::Release };
+        if self.debug_key(key, action) {
+            return;
         }
         self.native_key_event(key, down, false);
         if down
@@ -492,9 +503,7 @@ impl Game<'_> {
                         // At rest it shows faintly where it sits.
                         None => (layout.stick_home, layout.stick_home, item.opacity * 0.6),
                     };
-                    disc(batch, atlas, origin, r, faded(FACE, k));
-                    ring(batch, atlas, origin, r, faded(EDGE, k));
-                    disc(batch, atlas, knob, r * 0.4, faded(FACE_PRESSED, k));
+                    draw_stick(batch, atlas, origin, knob, r, k);
                 }
                 Control::Hotbar => {}
             }
@@ -520,8 +529,7 @@ impl Game<'_> {
                 Control::Stick => {
                     outline(batch, atlas, a, faded(EDGE, 0.5));
                     let home = layout.stick_home;
-                    disc(batch, atlas, home, layout.stick_radius, faded(FACE, k));
-                    ring(batch, atlas, home, layout.stick_radius, faded(EDGE, k));
+                    draw_stick(batch, atlas, home, home, layout.stick_radius, k);
                 }
                 Control::Hotbar => outline(batch, atlas, a, faded(EDGE, 0.8)),
             }
@@ -551,24 +559,11 @@ impl Game<'_> {
         }
         let mut bottom = layout.safe.y;
         for (button, a) in EditorButton::toolbar(layout) {
-            let face = if button == EditorButton::Done {
-                0xd030_8040
-            } else {
-                0xc020_2020
-            };
-            batch.fill(atlas, a.x, a.y, a.w, a.h, face);
-            outline(batch, atlas, a, EDGE);
+            let done = button == EditorButton::Done;
+            let face = if done { 0xff3c_7025 } else { MENU_FACE };
+            bevel(batch, atlas, a, face, false);
             let label = horizon_client::lang::get(button.label(view.placement.hidden));
-            let label = fit(atlas, &label, a.w - 4.0);
-            let width = HudBatch::text_width(atlas, &label);
-            batch.text(
-                atlas,
-                &label,
-                a.x + (a.w - width) / 2.0,
-                a.y + (a.h - 8.0) / 2.0,
-                INK,
-                true,
-            );
+            centred_label(batch, atlas, &label, a, if done { INK } else { BUTTON_INK });
             bottom = bottom.max(a.y + a.h);
         }
         let caption = match view.selected {
@@ -613,28 +608,28 @@ impl Game<'_> {
             draw_button(batch, atlas, *button, a, k, pressed);
             return;
         }
-        let (face, ink) = if pressed {
-            (FACE_PRESSED, INK_PRESSED)
-        } else {
-            (FACE, INK)
-        };
-        batch.fill(atlas, a.x, a.y, a.w, a.h, faded(face, k));
-        outline(batch, atlas, a, faded(EDGE, k));
+        draw_plate(batch, atlas, a, k, pressed);
         let label = match bind {
-            Some(Bind::Key(name)) => horizon_client::keybinds::display_name(name).plain(),
+            Some(Bind::Key(name)) => binding_label(name),
             _ => "?".to_owned(),
         };
-        centred_label(batch, atlas, &label, a, faded(ink, k));
+        let ink = if pressed { INK_PRESSED } else { BUTTON_INK };
+        let label_area = Area {
+            x: a.x + a.w * 0.09,
+            y: a.y + if pressed { a.h / 22.0 } else { -a.h / 22.0 },
+            w: a.w * 0.82,
+            h: a.h,
+        };
+        centred_label(batch, atlas, &label, label_area, faded(ink, k));
     }
 
     /// The long press's menu: its items, the ones that can't be used dimmed.
     fn draw_touch_menu(&self, batch: &mut HudBatch, layout: &Layout, menu: EditorMenu) {
         let atlas = &self.gui.atlas;
         for (item, a, usable) in menu.items(layout) {
-            batch.fill(atlas, a.x, a.y, a.w, a.h, MENU_FACE);
-            outline(batch, atlas, a, EDGE);
+            bevel(batch, atlas, a, MENU_FACE, false);
             let label = horizon_client::lang::get(item.label());
-            centred_label(batch, atlas, &label, a, if usable { INK } else { MENU_OFF });
+            centred_label(batch, atlas, &label, a, if usable { BUTTON_INK } else { MENU_OFF });
         }
     }
 
@@ -663,27 +658,27 @@ impl Game<'_> {
         for (hit, a) in grid.cells {
             let (label, face) = match hit {
                 PickerHit::Key(name) => (
-                    horizon_client::keybinds::display_name(name).plain(),
+                    binding_label(name),
                     if bound == Some(name) {
-                        0xd030_8040
+                        0xff3c_7025
                     } else {
                         MENU_FACE
                     },
                 ),
-                PickerHit::Prev => ("<".to_owned(), 0xc020_2020),
-                PickerHit::Next => (">".to_owned(), 0xc020_2020),
+                PickerHit::Prev => ("<".to_owned(), MENU_FACE),
+                PickerHit::Next => (">".to_owned(), MENU_FACE),
                 PickerHit::Clear => (
                     horizon_client::lang::get("horizon.touch.key.clear"),
-                    0xc020_2020,
+                    MENU_FACE,
                 ),
                 PickerHit::Cancel => (
                     horizon_client::lang::get("horizon.touch.key.cancel"),
-                    0xc020_2020,
+                    MENU_FACE,
                 ),
             };
-            batch.fill(atlas, a.x, a.y, a.w, a.h, face);
-            outline(batch, atlas, a, EDGE);
-            centred_label(batch, atlas, &label, a, INK);
+            let selected = matches!(hit, PickerHit::Key(name) if bound == Some(name));
+            bevel(batch, atlas, a, face, selected);
+            centred_label(batch, atlas, &label, a, if selected { INK } else { BUTTON_INK });
         }
     }
 }
@@ -698,7 +693,7 @@ fn centred_label(batch: &mut HudBatch, atlas: &HudAtlas, label: &str, a: Area, i
         a.x + (a.w - width) / 2.0,
         a.y + (a.h - 8.0) / 2.0,
         ink,
-        true,
+        false,
     );
 }
 
@@ -725,14 +720,88 @@ fn draw_button(
     k: f32,
     pressed: bool,
 ) {
-    let (face, ink) = if pressed {
-        (FACE_PRESSED, INK_PRESSED)
-    } else {
-        (FACE, INK)
+    let name = match button {
+        TouchButton::Jump => "jump",
+        TouchButton::Sneak => "sneak",
+        TouchButton::Attack => "attack",
+        TouchButton::Use => "use",
+        TouchButton::Drop => "drop",
+        TouchButton::Inventory => "inventory",
+        TouchButton::Chat => "chat",
+        TouchButton::Perspective => "camera",
+        TouchButton::Pause => "pause",
+        TouchButton::Debug => "debug",
+        TouchButton::Sprint => "sprint",
     };
-    batch.fill(atlas, a.x, a.y, a.w, a.h, faded(face, k));
-    outline(batch, atlas, a, faded(EDGE, k));
+    let sprite = if pressed { format!("{name}_pressed") } else { name.to_owned() };
+    if draw_touch_sprite(batch, atlas, &sprite, a, k) {
+        return;
+    }
+    draw_plate(batch, atlas, a, k, pressed);
+    let ink = if pressed { INK_PRESSED } else { BUTTON_INK };
     draw_icon(batch, atlas, icons::icon(button), a, faded(ink, k));
+}
+
+fn binding_label(binding: &str) -> String {
+    binding.split('+')
+        .map(|key| horizon_client::keybinds::display_name(key.trim()).plain())
+        .collect::<Vec<_>>()
+        .join("+")
+}
+
+fn draw_touch_sprite(
+    batch: &mut HudBatch,
+    atlas: &HudAtlas,
+    name: &str,
+    a: Area,
+    opacity: f32,
+) -> bool {
+    let name = format!("starling:gui/sprites/touch/{name}");
+    if !atlas.sprites.contains_key(&name) {
+        return false;
+    }
+    batch.sprite_scaled(atlas, &name, a.x, a.y, a.w, a.h, faded(INK, opacity));
+    true
+}
+
+fn draw_plate(batch: &mut HudBatch, atlas: &HudAtlas, a: Area, k: f32, pressed: bool) {
+    let sprite = if pressed { "custom_blank_pressed" } else { "custom_blank" };
+    if !draw_touch_sprite(batch, atlas, sprite, a, k) {
+        let face = if pressed { FACE_PRESSED } else { FACE };
+        bevel(batch, atlas, a, faded(face, k), pressed);
+    }
+}
+
+fn bevel(batch: &mut HudBatch, atlas: &HudAtlas, a: Area, face: u32, pressed: bool) {
+    let alpha = face & 0xff00_0000;
+    let edge = (a.w.min(a.h) / 22.0).max(1.0);
+    batch.fill(atlas, a.x, a.y, a.w, a.h, alpha | 0x151515);
+    batch.fill(atlas, a.x + edge, a.y + edge, a.w - edge * 2.0, a.h - edge * 2.0, face);
+    let top = if pressed { 0x484848 } else { 0xd6d6d6 };
+    let bottom = if pressed { 0x9c9c9c } else { 0x454545 };
+    batch.fill(atlas, a.x + edge, a.y + edge, a.w - edge * 2.0, edge, alpha | top);
+    batch.fill(atlas, a.x + edge, a.y + edge, edge, a.h - edge * 2.0, alpha | top);
+    batch.fill(atlas, a.x + edge, a.y + a.h - edge * 2.0, a.w - edge * 2.0, edge, alpha | bottom);
+    batch.fill(atlas, a.x + a.w - edge * 2.0, a.y + edge, edge, a.h - edge * 2.0, alpha | bottom);
+}
+
+fn draw_stick(
+    batch: &mut HudBatch,
+    atlas: &HudAtlas,
+    origin: (f32, f32),
+    knob: (f32, f32),
+    radius: f32,
+    k: f32,
+) {
+    let base = Area { x: origin.0 - radius, y: origin.1 - radius, w: radius * 2.0, h: radius * 2.0 };
+    let top = Area { x: knob.0 - radius * 0.5, y: knob.1 - radius * 0.5, w: radius, h: radius };
+    if !draw_touch_sprite(batch, atlas, "stick", base, k) {
+        disc(batch, atlas, origin, radius, faded(FACE, k));
+        ring(batch, atlas, origin, radius, faded(EDGE, k));
+    }
+    if !draw_touch_sprite(batch, atlas, "stick_knob", top, k) {
+        disc(batch, atlas, knob, radius * 0.5, faded(FACE_PRESSED, k));
+    }
 }
 
 /// `icon` centred in `a`, in `ink`.
