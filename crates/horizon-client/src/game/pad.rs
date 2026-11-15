@@ -60,8 +60,6 @@ pub(super) struct Pads {
     /// virtual pad they hold this iteration.
     pub(super) touch: horizon_client_input::touch::TouchControls,
     pub(super) touch_state: PadState,
-    /// The touch F3 button is down (touch.rs).
-    pub(super) touch_debug: bool,
     /// The touch Sneak button is pressing the sneak key (touch.rs).
     pub(super) touch_sneak: bool,
     /// The keys the touch controls' own buttons hold down (touch.rs).
