@@ -1752,6 +1752,12 @@ impl Streaming {
                         continue;
                     }
                     self.meshing.remove(&(x, sy, z));
+                    // An edit made after this snapshot stays dirty until the job
+                    // finishes. Never upload its obsolete block geometry.
+                    if world.dirty_sections.contains(&(x, sy, z)) {
+                        stale.push(((x, sy, z), mesh));
+                        continue;
+                    }
                     self.compile_started.insert((x, sy, z), seq);
                     self.meshed_total += 1;
                     uploads.push(((x, sy, z), mesh));
@@ -2102,13 +2108,27 @@ impl Streaming {
         // Meshes waiting for upload count too: when uploads fall behind (a
         // low frame rate at a wide distance), meshing on held gigabytes of
         // them until the system swapped.
-        let room = (self.workers * 32).saturating_sub(self.meshing.len() + self.upload_backlog);
-        nearest_first(&mut candidates, room);
+        let occupied = self.meshing.len() + self.upload_backlog + uploads.len();
+        let capacity = self.workers * 32;
+        let room = capacity.saturating_sub(occupied);
+        // The reserve also counts completed meshes waiting for upload, so
+        // edits cannot grow an unbounded second queue when the GPU is busy.
+        let rebuild_room = (self.workers * 4).saturating_sub(occupied.saturating_sub(capacity));
+        bounded::mesh_sections(
+            &mut candidates,
+            room,
+            rebuild_room,
+            |key| self.meshing.contains_key(&key),
+            |key| self.compile_started.contains_key(&key),
+        );
         for (_, x, z, sections) in candidates.drain(..) {
             let Some(region) = Self::region(world, x, z) else {
                 continue;
             };
-            world.dirty_sections.take_column(x, z);
+            let remaining = world.dirty_sections.take_column(x, z) & !sections;
+            if !remaining.is_empty() {
+                world.dirty_sections.insert_column_mask((x, z), remaining);
+            }
             for sy in sections.iter().map(|sy| sy as i32) {
                 let first = self.meshed.insert((x, z));
                 self.sequence += 1;
