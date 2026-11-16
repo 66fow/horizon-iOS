@@ -2,14 +2,14 @@ name: Bedrock Style
 
 on:
   workflow_dispatch:
- # push:
- #   branches: [bedrock-style]
- #   paths-ignore:
- #     - mod-list/**
- #     - packaging/ios/builder/**
- #     - packaging/ios/native-mods.md
- #     - .github/workflows/ios-mods-*.yml
- #     - .github/workflows/ios-native-*.yml
+  push:
+    branches: [bedrock-style]
+    paths-ignore:
+      - mod-list/**
+      - packaging/ios/builder/**
+      - packaging/ios/native-mods.md
+      - .github/workflows/ios-mods-*.yml
+      - .github/workflows/ios-native-*.yml
 
 permissions:
   contents: read
