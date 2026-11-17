@@ -158,6 +158,8 @@ mod fishing;
 mod fov;
 mod foxes;
 mod frame_geometry;
+#[cfg(any(target_os = "ios", test))]
+mod frame_governor;
 mod frames;
 #[cfg(feature = "friends")]
 mod friends;
@@ -2894,6 +2896,8 @@ struct Game<'a> {
     native_mod_screen: Option<String>,
     /// Meshed sections waiting for an upload budget (Horizon settings).
     pending_uploads: Vec<((i32, i32, i32), horizon_client::mesher::SectionMesh)>,
+    #[cfg(target_os = "ios")]
+    frame_governor: frame_governor::Governor,
     /// This frame's view frustum, for culling entities and block entities.
     view_frustum: Option<horizon_client::gfx::Frustum>,
     /// Whether the renderer's section-occlusion graph is active for this view.
@@ -7695,6 +7699,10 @@ impl Game<'_> {
         self.title = None;
         self.clear_lod();
         self.pending_uploads.clear();
+        #[cfg(target_os = "ios")]
+        {
+            self.frame_governor = frame_governor::Governor::default();
+        }
         if let Some(r) = self.renderer.as_mut() {
             r.clear_sections(self.world.layout());
         }
@@ -7740,6 +7748,10 @@ impl Game<'_> {
         self.screen = Screen::Playing;
         self.clear_lod();
         self.pending_uploads.clear();
+        #[cfg(target_os = "ios")]
+        {
+            self.frame_governor = frame_governor::Governor::default();
+        }
         if let Some(r) = self.renderer.as_mut() {
             r.clear_sections(self.world.layout());
         }
@@ -8577,6 +8589,10 @@ impl Game<'_> {
         self.forget_atlas_slots();
         self.clear_lod();
         self.pending_uploads.clear();
+        #[cfg(target_os = "ios")]
+        {
+            self.frame_governor = frame_governor::Governor::default();
+        }
         let context = self.worker_context();
         self.streaming.reload_resources(&mut self.world, context);
         self.native_shaders = native_shaders::NativeShaders::picking(&std::mem::take(
@@ -8589,6 +8605,10 @@ impl Game<'_> {
     fn all_sections_changed(&mut self) {
         self.clear_lod();
         self.pending_uploads.clear();
+        #[cfg(target_os = "ios")]
+        {
+            self.frame_governor = frame_governor::Governor::default();
+        }
         if let Some(renderer) = self.renderer.as_mut() {
             renderer.clear_sections(self.world.layout());
         }
@@ -11400,6 +11420,20 @@ impl Game<'_> {
                             );
                         }
                     }
+                    #[cfg(target_os = "ios")]
+                    if rendered && self.title.is_none() && self.focused && !self.pause {
+                        let refresh = self.debug_refresh_rate().unwrap_or(60_000).max(1);
+                        let fps = (self.framerate_limit().max(1) as f64)
+                            .min(f64::from(refresh) / 1000.0);
+                        if let Some(r) = &self.renderer {
+                            self.frame_governor.observe(
+                                elapsed,
+                                now.elapsed().saturating_sub(r.last_wait),
+                                r.gpu_times.last().copied(),
+                                Duration::from_secs_f64(1.0 / fps),
+                            );
+                        }
+                    }
                     if let Some(r) = self.renderer.as_mut() {
                         let cpu = now.elapsed().saturating_sub(r.last_wait);
                         if rendered {
@@ -12035,6 +12069,8 @@ impl<'a> Game<'a> {
             async_particle_culler: RefCell::new(Default::default()),
             pack_shadow_casters: (false, false),
             pending_uploads: Vec::new(),
+            #[cfg(target_os = "ios")]
+            frame_governor: frame_governor::Governor::default(),
             frame_graph: Default::default(),
             extras: Default::default(),
             pvp: Default::default(),
