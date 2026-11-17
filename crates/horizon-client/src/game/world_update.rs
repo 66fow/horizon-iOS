@@ -212,6 +212,19 @@ impl Game<'_> {
             .extra
             .extend(waiting.into_iter().map(|chunk| (chunk, 0)));
         self.streaming.upload_backlog = self.pending_uploads.len();
+        #[cfg(target_os = "ios")]
+        {
+            let budget = self.frame_governor.budget();
+            self.streaming.mesh_budget = Some(horizon_client::streaming::MeshBudget {
+                sections: budget.mesh_sections,
+                bytes: budget.mesh_bytes,
+                pending_bytes: self
+                    .pending_uploads
+                    .iter()
+                    .map(|(_, m)| m.capacity_bytes())
+                    .sum(),
+            });
+        }
         let (uploads, unloaded) =
             horizon_client::spans::time("streaming", || self.streaming.update(&mut self.world));
         self.streaming.extra.truncate(areas);
@@ -383,6 +396,12 @@ impl Game<'_> {
                 } else {
                     (0, AUTO_UPLOAD_BYTES)
                 };
+                #[cfg(target_os = "ios")]
+                let budget = if budget == 0 {
+                    self.frame_governor.budget().upload_bytes
+                } else {
+                    budget.min(self.frame_governor.budget().upload_bytes)
+                };
                 let (mut count, mut bytes) = (0, 0u64);
                 // iOS also keeps the time cap alongside explicit count/byte limits:
                 // CPU encoding time alone cannot account for shared GPU bandwidth.
@@ -393,6 +412,8 @@ impl Game<'_> {
                 } else {
                     AUTO_UPLOAD_TIME
                 };
+                #[cfg(target_os = "ios")]
+                let auto_time = auto_time.min(self.frame_governor.budget().upload_time);
                 let started = Instant::now();
                 while let Some((_, mesh)) = pending.last() {
                     let size = ((mesh.solid.len() + mesh.translucent.len())
@@ -461,8 +482,12 @@ impl Game<'_> {
                 renderer.queue_lods(meshes, lod.removed(), lod.take_cutout());
                 // A finished job can hold hundreds of tiles: spread them
                 // over frames rather than stall one.
+                #[cfg(not(target_os = "ios"))]
+                let lod_budget = Duration::from_millis(2);
+                #[cfg(target_os = "ios")]
+                let lod_budget = self.frame_governor.budget().upload_time / 4;
                 horizon_client::spans::time("lod_upload", || {
-                    renderer.upload_lods(std::time::Duration::from_millis(2))
+                    renderer.upload_lods(lod_budget)
                 });
             }
         }
