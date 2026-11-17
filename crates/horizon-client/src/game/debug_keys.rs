@@ -384,7 +384,7 @@ impl Game<'_> {
     }
     /// The monitor's refresh rate in millihertz, asked of the OS at most once a second (on
     /// Windows, winit calls `EnumDisplaySettingsExW` each time).
-    fn debug_refresh_rate(&self) -> Option<u32> {
+    pub(super) fn debug_refresh_rate(&self) -> Option<u32> {
         if let Some((at, rate)) = self.debug_refresh.get()
             && at.elapsed() < Duration::from_secs(1)
         {
