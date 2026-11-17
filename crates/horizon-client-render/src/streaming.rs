@@ -2,6 +2,9 @@
 //! around the player, closest first. The game thread owns the world and only
 //! hands immutable `Arc` snapshots to workers; results carry a sequence number
 //! so stale work is dropped.
+mod mesh_budget;
+pub use mesh_budget::MeshBudget;
+
 use crate::fast_hash::{FxHashMap, FxHashSet};
 use crate::section_mask::SectionMask;
 use crate::{
@@ -552,6 +555,9 @@ pub struct Streaming {
     /// Finished meshes the renderer has not taken yet (the game's pending
     /// uploads): they count against the meshing room as the jobs do.
     pub upload_backlog: usize,
+    /// Optional admission limits from the client frame governor.
+    pub mesh_budget: Option<MeshBudget>,
+    mesh_size_estimate: usize,
     /// Dimension flags: sky light, Nether face shading.
     pub sky_light: bool,
     pub nether_shading: bool,
@@ -1159,6 +1165,8 @@ impl Streaming {
             mod_forced: HashSet::new(),
             paused: false,
             upload_backlog: 0,
+            mesh_budget: None,
+            mesh_size_estimate: 1024 * 1024,
             sky_light: true,
             nether_shading: false,
             shader_pack_lighting: false,
@@ -2114,6 +2122,23 @@ impl Streaming {
         // The reserve also counts completed meshes waiting for upload, so
         // edits cannot grow an unbounded second queue when the GPU is busy.
         let rebuild_room = (self.workers * 4).saturating_sub(occupied.saturating_sub(capacity));
+        let (room, rebuild_room) = if let Some(budget) = self.mesh_budget {
+            let mut ready_bytes = 0usize;
+            for (_, mesh) in &uploads {
+                let bytes = mesh.capacity_bytes();
+                ready_bytes = ready_bytes.saturating_add(bytes);
+                self.mesh_size_estimate = self.mesh_size_estimate.max(bytes);
+            }
+            budget.rooms(
+                occupied,
+                self.meshing.len(),
+                ready_bytes,
+                self.mesh_size_estimate,
+                (capacity, self.workers * 4),
+            )
+        } else {
+            (room, rebuild_room)
+        };
         bounded::mesh_sections(
             &mut candidates,
             room,
