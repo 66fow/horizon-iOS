@@ -7,6 +7,7 @@ impl Game<'_> {
     /// the renderer's arena shrinking (`Renderer::trim_memory`), then the pages mimalloc and
     /// the system heap hold free (`horizon_threads::release_free_memory`).
     pub(super) fn on_memory_warning(&mut self) {
+        self.frame_governor.memory_warning();
         if let Some(renderer) = self.renderer.as_mut() {
             renderer.trim_memory();
         }
