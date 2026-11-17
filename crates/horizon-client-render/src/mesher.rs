@@ -463,7 +463,8 @@ impl SectionMesh {
         self.bounds = None;
         self.keep = false;
     }
-    pub(crate) fn capacity_bytes(&self) -> usize {
+    /// Allocated CPU storage retained by this mesh, including packed/source buffers.
+    pub fn capacity_bytes(&self) -> usize {
         self.solid.capacity() * std::mem::size_of::<TerrainVertex>()
             + self.translucent.capacity() * std::mem::size_of::<TerrainVertex>()
             + (self.solid_sources.capacity() + self.translucent_sources.capacity())
