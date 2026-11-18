@@ -632,8 +632,7 @@ use winit::{
 /// Chunk Updates or Upload Budget: a burst past it waits for the next frames.
 #[cfg(not(target_os = "ios"))]
 const AUTO_UPLOAD_TIME: Duration = Duration::from_millis(2);
-/// iOS: the GPU's world pass already takes most of a 60 Hz frame on an iPhone 11, so a
-/// frame gives the uploads half the time and the burst spreads over more frames.
+/// iOS: reserve less of the frame slot for uploads and spread bursts over more frames.
 #[cfg(target_os = "ios")]
 const AUTO_UPLOAD_TIME: Duration = Duration::from_millis(1);
 /// `AUTO_UPLOAD_TIME` while the view's terrain is still arriving (a world's
