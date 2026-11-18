@@ -5,9 +5,10 @@ use super::{
     Mob, MobEvent, MobWorld,
     anim::{Poses, State as AnimState},
     control::MoveKind,
-    goals::{Cx, Goal, LookAtPlayer, MOVE, Panic, RandomLookAround, Stroll, goal_clone},
+    goals::{AnimalPanic, Cx, Goal, LookAtPlayer, MOVE, RandomLookAround, Stroll, goal_clone},
     nav::NavKind,
 };
+use crate::health::DamageLevel;
 use crate::items::ItemStack;
 use crate::sculk::{self, Context, Info};
 use horizon_core::geometry::trig::Mth;
@@ -22,9 +23,25 @@ pub mod interaction;
 // Allay state: `main_hand` the held filter; `State::inventory` the fetched stack,
 // `tame` a liked player, `point` the wanted item (set by the game),
 // `State::noteblock` the liked note block with `ints[2]` its cooldown,
-// `ints[3]` the pickup cooldown, `flag` dancing with `ints[4]` the dance clock,
+// `pickup_cooldown` the pickup cooldown, `flag` dancing with `ints[4]` the dance clock,
 // `egg_time` the duplication cooldown. AnimState slots: holding (0),
 // spinning (1).
+/// `ITEM_PICKUP_COOLDOWN_TICKS`. `CountDownCooldownTicks` counts it down while it is above 0 and
+/// erases it the tick after it reached 0 (`stop`), so a memory at 0 is still
+/// there for a tick, and `Allay.isOnPickupCooldown` is the memory's presence.
+pub fn pickup_cooldown(m: &Mob) -> Option<i32> {
+    m.extra.allay.as_ref()?.pickup_cooldown
+}
+/// `Allay.canPickUpLoot`: a held item and no pickup-cooldown memory.
+pub fn can_pick_up_loot(m: &Mob) -> bool {
+    m.extra.main_hand_stack().is_some() && pickup_cooldown(m).is_none()
+}
+/// Set or erase `ITEM_PICKUP_COOLDOWN_TICKS` (see [`pickup_cooldown`]).
+pub fn set_pickup_cooldown(m: &mut Mob, ticks: Option<i32>) {
+    if let Some(state) = m.extra.allay.as_mut() {
+        state.pickup_cooldown = ticks;
+    }
+}
 pub const HOLD: usize = 0;
 pub const SPIN: usize = 1;
 /// `Allay.isLikedPlayer`: compare the supplied verified player UUID with
@@ -157,6 +174,8 @@ pub fn pickup_reach(bounds: Aabb) -> Aabb {
 pub struct State {
     /// Allay's separate one-slot SimpleContainer.
     pub inventory: Option<ItemStack>,
+    /// The full Codec.INT value, including zero while the memory is present.
+    pub pickup_cooldown: Option<i32>,
     pub vibration: sculk::Data,
     pub noteblock: Option<GlobalPos>,
     /// The `LIKED_PLAYER` memory's time to live (`MemorySlot.timeToLive`);
@@ -219,7 +238,7 @@ pub fn register(m: &mut Mob) {
     // FlyingPathNavigation.setRequiredPathLength(48).
     m.set_required_path_length(48.0);
     let g = &mut m.ai.goals;
-    g.add(0, Panic::new(2.5));
+    g.add(0, AnimalPanic::new(2.5));
     g.add(1, Fetch);
     g.add(2, Deliver);
     g.add(3, StayClose);
@@ -310,7 +329,7 @@ fn deposit(m: &mut Mob, cx: &Cx) -> Option<[f64; 3]> {
     if !m.extra.tame {
         return None;
     }
-    let p = cx.w.player.as_ref().filter(|p| p.alive && !p.spectator)?;
+    let p = cx.w.selected_player().filter(|p| p.alive && !p.spectator)?;
     (p.position.distance_squared(m.position) <= 64.0 * 64.0).then_some([
         p.position.x,
         p.position.y,
@@ -326,7 +345,7 @@ impl Goal for Fetch {
         MOVE
     }
     fn can_use(&mut self, m: &mut Mob, _cx: &mut Cx) -> bool {
-        m.extra.point.is_some() && m.extra.ints[3] <= 0
+        m.extra.point.is_some() && pickup_cooldown(m).is_none()
     }
     fn tick(&mut self, m: &mut Mob, cx: &mut Cx) {
         if let Some(p) = m.extra.point
@@ -480,22 +499,28 @@ pub fn tick(m: &mut Mob, w: &MobWorld, events: &mut Vec<MobEvent>) {
 /// `Allay.travel`: `travelFlying(input, getSpeed())` — the airborne speed is
 /// the one the move control set this tick, and no gravity applies, so an
 /// allay never falls under its own travel.
-pub fn travel(m: &mut Mob, w: &MobWorld, input: Vec3, events: &mut Vec<MobEvent>) -> bool {
+pub fn travel(
+    m: &mut Mob,
+    w: &MobWorld,
+    level: &mut DamageLevel<'_>,
+    input: Vec3,
+    events: &mut Vec<MobEvent>,
+) -> bool {
     let speed = m.ai.speed;
-    m.travel_flying_speeds(w, input, events, 0.02, 0.02, speed);
+    m.travel_flying_speeds(w, level, input, events, 0.02, 0.02, speed);
     true
 }
-/// `Allay.aiStep` / `tick`: healing, the dance's jukebox check, cooldowns, the
-/// hold and spin clocks.
+/// `Allay.aiStep` / `tick`: healing, cooldowns, the hold and spin clocks.
 pub fn ai_step(m: &mut Mob, w: &MobWorld) {
     tick_liked_player(m);
-    passive_heal(m);
+    passive_heal(m, w.loop_context);
     stop_dancing_away(m, w);
-    for i in [2, 3] {
-        if m.extra.ints[i] > 0 {
-            m.extra.ints[i] -= 1;
-        }
+    if m.extra.ints[2] > 0 {
+        m.extra.ints[2] -= 1;
     }
+    // CountDownCooldownTicks stops and erases a nonpositive memory; a positive
+    // value reaches zero for one tick before that stop.
+    set_pickup_cooldown(m, pickup_cooldown(m).filter(|t| *t > 0).map(|t| t - 1));
     update_duplication_cooldown(m);
     animate(m);
 }
@@ -536,9 +561,9 @@ pub fn forget_liked_player(m: &mut Mob) {
     }
 }
 /// `Allay.aiStep`: server-side healing runs independently of the AI gate.
-pub fn passive_heal(m: &mut Mob) {
+pub fn passive_heal(m: &mut Mob, context: &horizon_world::native_load_context::LoopContext) {
     if m.alive() && m.age.is_multiple_of(10) {
-        m.heal(1.0);
+        m.heal(context, 1.0);
     }
 }
 /// `Allay.updateDuplicationCooldown`: the server decrements positive counters,
@@ -551,7 +576,7 @@ pub fn update_duplication_cooldown(m: &mut Mob) {
 /// `Allay.tick`'s client half: the hold and spin clocks (the server's and a
 /// client's).
 pub fn animate(m: &mut Mob) {
-    let holding = m.extra.main_hand.is_some();
+    let holding = m.extra.main_hand_id().is_some();
     let v = &mut m.anim.v;
     v[HOLD] = (v[HOLD] + if holding { 1.0 } else { -1.0 }).clamp(0.0, 5.0);
     if m.extra.flag {

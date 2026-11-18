@@ -1,10 +1,10 @@
 //! Tag text output: `StringTagVisitor` (compact SNBT) and
-//! `TextComponentTagVisitor` (the coloured form commands print), plus Java's
-//! number formatting.
+//! `TextComponentTagVisitor` (the coloured form commands print).
 use crate::text::{self, Style, Text};
-use horizon_world::nbt::Tag;
+use horizon_core::java_number::{double_to_string, float_to_string};
+use horizon_core::nbt::Tag;
 use horizon_world::snbt_text::string_of;
-pub use horizon_world::snbt_text::{java_double, java_float, quote_and_escape, to_snbt};
+pub use horizon_world::snbt_text::{quote_and_escape, to_snbt};
 
 // ---- the coloured form -----------------------------------------------------
 
@@ -91,8 +91,8 @@ impl Pretty {
             Tag::Short(v) => self.number(&v.to_string(), "s"),
             Tag::Int(v) => self.number(&v.to_string(), ""),
             Tag::Long(v) => self.number(&v.to_string(), "L"),
-            Tag::Float(v) => self.number(&java_float(f32::from_bits(*v)), "f"),
-            Tag::Double(v) => self.number(&java_double(f64::from_bits(*v)), "d"),
+            Tag::Float(v) => self.number(&float_to_string(f32::from_bits(*v)), "f"),
+            Tag::Double(v) => self.number(&double_to_string(f64::from_bits(*v)), "d"),
             Tag::String(s) => self.quoted(&string_of(s), text::GREEN),
             Tag::ByteArray(a) => {
                 let v: Vec<i8> = a.iter().map(|b| *b as i8).collect();
@@ -153,7 +153,7 @@ impl Pretty {
             self.lit("]", None);
         }
     }
-    fn compound(&mut self, c: &horizon_world::nbt::Compound) {
+    fn compound(&mut self, c: &horizon_core::nbt::Compound) {
         if c.is_empty() {
             self.lit("{", None);
             self.lit("}", None);
@@ -211,7 +211,7 @@ impl Pretty {
         }
     }
 }
-fn hash_bucket(len: usize, key: &horizon_world::nbt::JavaString) -> usize {
+fn hash_bucket(len: usize, key: &horizon_core::nbt::JavaString) -> usize {
     let mut capacity = 16usize;
     while len > capacity * 3 / 4 {
         capacity *= 2;
@@ -222,9 +222,9 @@ fn hash_bucket(len: usize, key: &horizon_world::nbt::JavaString) -> usize {
     ((h ^ (h >> 16)) as usize) & (capacity - 1)
 }
 fn piston_hash_order(
-    c: &horizon_world::nbt::Compound,
+    c: &horizon_core::nbt::Compound,
     part: PistonPart,
-) -> Vec<(&horizon_world::nbt::JavaString, &Tag)> {
+) -> Vec<(&horizon_core::nbt::JavaString, &Tag)> {
     let mut entries: Vec<_> = c.iter().collect();
     match part {
         PistonPart::Entity => {
@@ -278,8 +278,8 @@ fn piston_hash_order(
 /// for a map that grew to its size by insertion: buckets by
 /// `HashMap.hash(String.hashCode())`, keys sharing a bucket in key order.
 pub fn java_hash_order(
-    c: &horizon_world::nbt::Compound,
-) -> Vec<(&horizon_world::nbt::JavaString, &Tag)> {
+    c: &horizon_core::nbt::Compound,
+) -> Vec<(&horizon_core::nbt::JavaString, &Tag)> {
     // Keys sharing a bucket iterate in insertion order: the order vanilla's
     // savers write them, as far as it is known here.
     const WRITE_ORDER: &[&str] = &[
@@ -320,7 +320,12 @@ pub fn java_hash_order(
         "FallFlying",
         "sleeping_pos",
         "Brain",
+        "last_hurt_by_player",
+        "last_hurt_by_player_memory_time",
+        "last_hurt_by_mob",
+        "ticks_since_last_hurt_by_mob",
         "equipment",
+        "locator_bar_icon",
         // ArmorStand.
         "Invisible",
         "Small",
@@ -337,10 +342,16 @@ pub fn java_hash_order(
         "immovable",
         "description",
         "hide_description",
+        // Interaction.addAdditionalSaveData.
+        "width",
+        "height",
+        "attack",
+        "interaction",
+        "response",
     ];
     // BlockEntity.saveMetadata writes the position after the entity's data.
     const AFTER: &[&str] = &["x", "y", "z"];
-    let rank = |k: &horizon_world::nbt::JavaString| {
+    let rank = |k: &horizon_core::nbt::JavaString| {
         let k = string_of(k);
         WRITE_ORDER
             .iter()
@@ -388,7 +399,7 @@ pub fn pretty_piston(tag: &Tag, part: PistonPart) -> Text {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use horizon_world::nbt::parse_snbt;
+    use horizon_core::nbt::parse_snbt;
 
     fn rt(s: &str) -> String {
         to_snbt(&parse_snbt(s).unwrap().0)
@@ -436,6 +447,20 @@ mod tests {
         );
     }
     #[test]
+    fn interaction_compound_orders_width_before_interaction_in_shared_bucket() {
+        // `width` and `interaction` share a bucket at every table size;
+        // `Interaction.addAdditionalSaveData` writes `width` first.
+        let tag = parse_snbt(
+            r#"{Air:300s,Fire:0s,Invulnerable:0b,Motion:[0.0d,0.0d,0.0d],OnGround:0b,PortalCooldown:0,Pos:[4.5d,100.0d,4.5d],Rotation:[0.0f,0.0f],UUID:[I;66,0,0,1],fall_distance:0.0d,height:1.25f,interaction:{player:[I;1,2,3,4],timestamp:9L},response:0b,width:1.0f}"#,
+        )
+        .unwrap()
+        .0;
+        assert_eq!(
+            pretty(&tag).plain(),
+            "{Motion: [0.0d, 0.0d, 0.0d], Invulnerable: 0b, fall_distance: 0.0d, Air: 300s, OnGround: 0b, PortalCooldown: 0, Rotation: [0.0f, 0.0f], Pos: [4.5d, 100.0d, 4.5d], response: 0b, Fire: 0s, width: 1.0f, interaction: {player: [I; 1, 2, 3, 4], timestamp: 9L}, UUID: [I; 66, 0, 0, 1], height: 1.25f}",
+        );
+    }
+    #[test]
     fn compact_form_matches_vanilla() {
         assert_eq!(
             rt("{b:1b,a:\"x\",c:[1,2],d:1.5f,e:2d,f:3L,g:4s}"),
@@ -452,15 +477,15 @@ mod tests {
     }
     #[test]
     fn java_number_text() {
-        assert_eq!(java_double(1.0), "1.0");
-        assert_eq!(java_double(0.1), "0.1");
-        assert_eq!(java_double(1.0e7), "1.0E7");
-        assert_eq!(java_double(12345678.9), "1.23456789E7");
-        assert_eq!(java_double(0.0001), "1.0E-4");
-        assert_eq!(java_double(-3.5), "-3.5");
-        assert_eq!(java_float(0.3), "0.3");
-        assert_eq!(java_float(100.0), "100.0");
-        assert_eq!(java_double(f64::NAN), "NaN");
+        assert_eq!(double_to_string(1.0), "1.0");
+        assert_eq!(double_to_string(0.1), "0.1");
+        assert_eq!(double_to_string(1.0e7), "1.0E7");
+        assert_eq!(double_to_string(12345678.9), "1.23456789E7");
+        assert_eq!(double_to_string(0.0001), "1.0E-4");
+        assert_eq!(double_to_string(-3.5), "-3.5");
+        assert_eq!(float_to_string(0.3), "0.3");
+        assert_eq!(float_to_string(100.0), "100.0");
+        assert_eq!(double_to_string(f64::NAN), "NaN");
     }
     #[test]
     fn pretty_form_is_coloured_without_changing_text() {

@@ -12,11 +12,10 @@ How decisions are made is in [GOVERNANCE.md](../GOVERNANCE.md); how a change rea
 | **Horizon Team** (GitHub team `horizon-team`, write access) | Review, label and merge pull requests; approve a fork's workflow runs; re-run failed jobs; start workflows by hand (`gh workflow run`); add `release-blocker` to an issue; merge in horizon-mods (form pull requests too) and upload its `staging` files |
 | **Trusted reviewers** (`.github/trusted-reviewers.txt`) | `/nightly`, `/close`, `/reopen`, `/label`, `/unlabel`, `/unclaim` by comment ([release-flow.md](release-flow.md#trusted-reviewers)) |
 | **Council** (🏛️ Council on Discord) | Decide by poll (`/vote`, `/poll start`); emergency actions (GOVERNANCE.md 4.6) |
-| **Organisation owners** (today: Ludovic only) | Repository variables and secrets (`SELF_HOSTED_CI`, `RELEASES_PAUSED`), branch protection, adding people to GitHub teams, merging past a missing review, the security advisories |
-| **Code owners** (`.github/CODEOWNERS`, today: Ludovic only) | Approve pull requests that touch `.github/`, `tools/ci/`, the release, signing and update code |
+| **Organisation owners** (Ludovic and rdbtCVS since 2026-11-11, council poll P28) | Repository variables and secrets (`SELF_HOSTED_CI`, `RELEASES_PAUSED`), branch protection, adding people to GitHub teams, merging past a missing review, the security advisories |
+| **Code owners** (`.github/CODEOWNERS`: the team `horizon-rust/council`, P35) | Approve pull requests that touch `.github/`, `tools/ci/`, the release, signing and update code |
 
-The council's first poll gives the organisation a second owner (GOVERNANCE.md section 11). Until then, anything in
-the last two rows waits for Ludovic.
+The organisation has two owners since the council's poll P28, so the last two rows no longer wait for one person.
 
 ## Merging a pull request
 
@@ -30,14 +29,15 @@ Nobody merges automatically. A Team member:
    force-push a contributor's branch (merge main into it instead).
 
 Risky pull requests (saves, the network or server thread, world generation, the launcher's installs and updates,
-the harnesses, anything over ~500 lines) get `needs-proof` and wait until someone has played the change: both
+the harnesses, anything over ~3000 lines of code) get `needs-proof` and wait until someone has played the change: both
 single-player paths, a LAN guest, a screenshot for anything visible. The list is in
 [release-flow.md](release-flow.md#merging).
 
 A pull request that touches a CODEOWNERS path needs a code owner's approving review: GitHub keeps its merge button
 locked until then. Leave it open and say in the thread that it waits for a code owner.
 
-Pull requests opened by the maintainer's agents (author `ludovic111`, body starting "Opened by Ludovic's AI agent")
+Pull requests opened by the maintainer's agents (author `ludovic111`, body starting "Opened by Ludovic's AI agent"
+or ending with a "🤖 Agent:" line)
 are ordinary pull requests: review and merge them like any other, or close them if they went stale. Closing keeps
 the branch.
 
@@ -47,7 +47,8 @@ Everything below runs by itself on GitHub; you only step in when something is wr
 
 - **The Nightly** is the only build players get. The train (`release.yml`, every 10 minutes) starts one after 5
   player-facing merges, or when the oldest has waited 6 hours, or at once for a pull request labelled
-  `release-now`. Only a commit where both `checks` and `parity-main` passed ships. Who may add `release-now` is the
+  `release-now`. Only a commit where both `checks` and `parity-main` passed ships. Its build also builds and
+  publishes the mod SDK of that commit ([release-flow](release-flow.md#mod-sdk)). Who may add `release-now` is the
   council's choice; until it decides, leave the label to the maintainer.
 - **Stopping Nightlies:** open an issue about the problem and label it `release-blocker`. Nothing is published
   while it is open, forced builds included. Close it when the fix is on main.
@@ -69,7 +70,7 @@ is waiting, and closes it once the runners are back.
 | Runner label | What waits | What to do |
 | --- | --- | --- |
 | `horizon-light` (bots) | Triage and claim commands, labels, overlap notes, the Mojang check | An organisation owner sets `SELF_HOSTED_CI` to `off` (Settings → Secrets and variables → Actions → Variables). Then everything runs on GitHub |
-| `horizon-checks` | `verify` of this repository's own pull requests ending in 0 or 1 | Same switch (`off` or `light`), then re-run the waiting checks. Forks' pull requests never use these runners |
+| `horizon-checks` | `verify` of pull requests ending in 0, approved forks' included | Same switch (`off` or `light`), then re-run the waiting checks. Forks' pull requests see no repository variable, so they wait for these runners |
 | `horizon-game` | A pull request's own parity job | It isn't required: merge on `verify`, and label pull requests that touch gameplay `needs-proof` |
 | `horizon-parity-main` | parity-main on main | Nothing can be done on GitHub. Nightlies wait for the last commit it passed on |
 | `horizon-nightly`, `horizon-release` | The Nightly's and the launcher's macOS builds | Nothing can be done on GitHub. No Nightly or launcher release until the Mac is back |

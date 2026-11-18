@@ -37,7 +37,7 @@ class GameCoverageTests(unittest.TestCase):
         self.assertEqual(row["missing"], ["b"])
         self.assertEqual(row["extra"], ["d"])
         self.assertEqual(row["empty"], ["c"])
-        self.assertAlmostEqual(row["coverage"], 2 / 3)
+        self.assertAlmostEqual(row["coverage"], 1 / 3)  # `c` is blank, so it does not cover its key
         self.assertEqual(row["problem"], "")
 
     def test_a_value_equal_to_english_is_listed_but_never_for_the_reference(self):
@@ -149,6 +149,32 @@ class CommandLineTests(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertIn("GAME es_es ", out)
         self.assertIn("LAUNCHER es ", out)
+
+    def test_show_keys_is_not_dropped_when_a_mode_also_prints_lines(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            write(folder, "en_us.json", '{\n  "a": "Apple",\n  "b": "Banana"\n}\n')
+            write(folder, "xx.json", '{\n  "a": "Manzana",\n  "c": "Datil"\n}\n')
+            common = ("--game-dir", tmp, "--game-only")
+            code, summary, _ = run(*common, "--summary")
+            code, with_keys, _ = run(*common, "--summary", "--show-keys")
+            code, unreviewed, _ = run(*common, "--unreviewed")
+            code, unreviewed_keys, _ = run(*common, "--unreviewed", "--show-keys")
+            code, payload, _ = run(*common, "--json", "--show-keys")
+        self.assertEqual(code, 0)
+        # the summary keeps its line per file, and the keys behind the counts follow it
+        self.assertIn("GAME xx 2/2 keys, missing 1, extra 1", summary)
+        self.assertIn("GAME xx 2/2 keys, missing 1, extra 1", with_keys)
+        self.assertNotIn("xx: missing (1)", summary)
+        self.assertIn("xx: missing (1)", with_keys)
+        self.assertIn("  b", with_keys)
+        self.assertIn("xx: not in the reference (1)", with_keys)
+        self.assertIn("  c", with_keys)
+        self.assertNotEqual(summary, with_keys)
+        # the unreviewed listing says the same, and the json stays a json
+        self.assertNotEqual(unreviewed, unreviewed_keys)
+        self.assertIn("xx: missing (1)", unreviewed_keys)
+        self.assertEqual(by_code(json.loads(payload)["game"]["files"], "xx")["missing"], ["b"])
 
 
 class ReviewTests(unittest.TestCase):

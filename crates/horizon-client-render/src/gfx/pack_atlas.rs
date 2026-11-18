@@ -666,34 +666,52 @@ const FACE: &str = "    vec3 hz_p0 = uintBitsToFloat(hz_cp0);\n    \
         }\n    \
     }\n";
 
-/// `terrain` (`PackAtlas::terrain_inputs`) drawing only solid terrain, then only cutout terrain:
-/// each leaves the other part's quads outside the clip volume. Solid: the quads over opaque
-/// texels and opaque leaves (`mesher::OPAQUE_LAYER`), as vanilla picks `ChunkSectionLayer.SOLID`
-/// per quad (`FaceBakery.computeMaterialTransparency`, `SectionCompiler.compile`), and lava's
-/// faces (sprite layers `lava`, its still and flowing sprites), which Iris 1.11.7 drew with
-/// `gbuffers_terrain_solid` in our probes, with and without `separateAo`.
+/// GLSL: whether a terrain vertex's quad is solid terrain rather than cutout. Solid: the quads
+/// over opaque texels and opaque leaves (`mesher::OPAQUE_LAYER`), as vanilla picks
+/// `ChunkSectionLayer.SOLID` per quad (`FaceBakery.computeMaterialTransparency`,
+/// `SectionCompiler.compile`), and lava's faces (sprite layers `lava`, its still and flowing
+/// sprites), which Iris 1.11.7 drew with `gbuffers_terrain_solid` in our probes, with and
+/// without `separateAo`.
 ///
 /// The test reads only the vertex's sprite layer, which all four vertices of a quad share: a
 /// quad lands whole in one part. The colour's alpha can't decide it, as with `separateAo` it
 /// holds each vertex's own ambient occlusion.
-pub fn terrain_parts(
-    terrain: &horizon_shaders::GbuffersInputs,
-    lava: &[u16],
-) -> [horizon_shaders::GbuffersInputs; 2] {
+fn solid(lava: &[u16]) -> String {
     let opaque = crate::mesher::OPAQUE_LAYER;
     let lava: String = lava
         .iter()
         .map(|l| format!(" || hz_v_layer == {l}u"))
         .collect();
-    let part = |solid: bool| {
+    format!("(hz_v_layer & {opaque}u) != 0u{lava}")
+}
+
+/// The game's `terrain` inputs (`PackAtlas::terrain_inputs`) for a pack: whole; drawing only
+/// solid terrain, then only cutout terrain (`solid`), each leaving the other part's quads outside
+/// the clip volume; and drawing both in one pass, each quad with its part's alpha test.
+pub fn game_terrain(
+    terrain: Option<horizon_shaders::GbuffersInputs>,
+    lava: &[u16],
+) -> horizon_shaders::GameInputs {
+    let solid = solid(lava);
+    let part = |terrain: &horizon_shaders::GbuffersInputs, part: bool| {
         let mut inputs = terrain.clone();
         inputs.after.push_str(&format!(
-            "    bool hz_solid = (hz_v_layer & {opaque}u) != 0u{lava};\n    \
-             if (hz_solid != {solid}) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);\n"
+            "    if (({solid}) != {part}) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);\n"
         ));
         inputs
     };
-    [part(true), part(false)]
+    horizon_shaders::GameInputs {
+        terrain_parts: terrain.as_ref().map(|t| [part(t, true), part(t, false)]),
+        terrain_one_pass: terrain.as_ref().map(|t| horizon_shaders::GbuffersInputs {
+            parts: Some(horizon_shaders::Parts {
+                solid: solid.clone(),
+                cutout_alpha_test: None,
+            }),
+            ..t.clone()
+        }),
+        terrain,
+        ..Default::default()
+    }
 }
 
 impl PackAtlas {
@@ -852,6 +870,7 @@ impl PackAtlas {
                 .collect(),
             after: String::new(),
             alpha_test: None,
+            parts: None,
             item_id_declared: false,
             far_depth: false,
             paged_maps: false,
@@ -876,6 +895,7 @@ mod tests {
     /// Two arrays of 2x2 sprites, one layer split; each layer a colour of its own.
     #[test]
     fn layers_land_in_their_cells() {
+        let _gpu = crate::gfx::test_gpu::lock();
         let instance = crate::gfx::test_gpu::instance();
         let Ok(adapter) = pollster::block_on(instance.request_adapter(&Default::default())) else {
             return;
@@ -1001,6 +1021,7 @@ mod tests {
     /// by 8 atlas. Each sprite has its own pixels, and its padding repeats its edge.
     #[test]
     fn stitched_sprites_keep_their_own_size_and_padding() {
+        let _gpu = crate::gfx::test_gpu::lock();
         let instance = crate::gfx::test_gpu::instance();
         let Ok(adapter) = pollster::block_on(instance.request_adapter(&Default::default())) else {
             return;
@@ -1198,16 +1219,19 @@ mod tests {
 
     #[test]
     fn stitched_material_maps_share_colour_rectangles() {
+        let _gpu = crate::gfx::test_gpu::lock();
         material_fixture(false);
     }
 
     #[test]
     fn animated_stitched_material_updates_only_its_rectangle() {
+        let _gpu = crate::gfx::test_gpu::lock();
         material_fixture(true);
     }
 
     #[test]
     fn terrain_inputs_respects_separate_ao() {
+        let _gpu = crate::gfx::test_gpu::lock();
         let instance = crate::gfx::test_gpu::instance();
         let Ok(adapter) = pollster::block_on(instance.request_adapter(&Default::default())) else {
             return;
